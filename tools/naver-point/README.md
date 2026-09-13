@@ -12,8 +12,11 @@
    - `naver-point run`: 포인트 수집 전체 실행 (혜택 클릭 + 랜덤 카드 뽑기)
    - `naver-point run --benefit-only`: 혜택 페이지 버튼만 수집
    - `naver-point run --draw-only`: 캠페인 랜덤 카드만 뽑기
+   - `naver-point run --dry-run`: 실제 클릭 없이 수집 가능한 버튼 목록만 점검
+   - `naver-point balance`: 현재 보유 포인트 잔액 및 오늘 획득 포인트 조회
    - `naver-point login`: GUI 브라우저 창을 띄워 네이버 로그인 수행 및 세션 추출
-   - `naver-point status`: 현재 세션의 만료 여부 및 로그인 상태 점검
+   - `naver-point status`: 현재 세션의 만료 여부 및 로그인 계정 상태 점검
+   - `naver-point logout`: 로컬 및 클라우드 세션 파일 안전 삭제 (세션 초기화)
    - `naver-point sync [push|pull]`: Google Drive와 세션 파일 수동 동기화
 
 2. **다중 PC 세션 동기화 (Google Drive & `gog` 브릿지)**:
@@ -26,12 +29,12 @@
      4. OS 표준 로컬 경로 (`~/.local/share/naver-point/naver_point_session.json`)
 
 3. **듀얼 출력 인터페이스 (Human TTY vs Machine JSON)**:
-   - **터미널 실행 (인간)**: 진행 스피너, 컬러 상태 로그, 수집 결과 요약 테이블 출력.
-   - **자동화/스크립트/에이전트 실행 (`--json`)**: 파이프라인 처리가 용이한 단일 라인 JSON 출력.
+   - **터미널 실행 (인간)**: 진행 스피너, 컬러 상태 로그, 수집 결과 및 포인트 잔액 변동 요약 테이블 출력.
+   - **자동화/스크립트/에이전트 실행 (`--json`)**: 파이프라인 처리가 용이한 정형 JSON 출력.
 
-4. **안티 봇 디텍션 및 안정적 세션 복원**:
-   - Playwright의 `--disable-blink-features=AutomationControlled` 플래그 및 인간적인 랜덤 딜레이(1.0~3.0초) 적용.
-   - 세션 쿠키와 localStorage를 한 번에 주입/복원하여 2차 인증 피로도 최소화.
+4. **안티 봇 디텍션 및 자동 장애 진단**:
+   - Playwright의 `--disable-blink-features=AutomationControlled` 플래그 및 비결정론적 랜덤 딜레이(1.0~3.0초) 적용.
+   - 헤드리스 실행 중 에러나 셀렉터 변경 발생 시 `logs/error_screenshot.png`로 화면을 자동 캡처하여 즉각적인 시각 진단 지원.
 
 ---
 
@@ -91,22 +94,37 @@ naver-point run --benefit-only
 # 랜덤 뽑기 페이지만 수집
 naver-point run --draw-only
 
+# 모의 실행 (클릭 없이 수집 대상 요소만 스캔)
+naver-point run --dry-run
+
 # 기계 판독용 JSON 출력 (스크립트/Cron 연동용)
 naver-point run --json
 ```
 
-### 2. 세션 점검 (`status`)
+### 2. 포인트 잔액 조회 (`balance`)
+```bash
+naver-point balance
+```
+- 현재 네이버페이 보유 포인트 잔액과 최근 수집 이력을 터미널에 요약 출력합니다 (`--json` 지원).
+
+### 3. 세션 점검 (`status`)
 ```bash
 naver-point status
 ```
-- 세션 파일 존재 여부, 만료 여부, 네이버 로그인 상태를 헤드리스로 빠르게 점검합니다.
+- 세션 파일 유효성, 로그인된 계정 ID(마스킹), 클라우드 동기화 상태를 헤드리스로 1~2초 만에 점검합니다.
 
-### 3. 클라우드 세션 수동 동기화 (`sync`)
+### 4. 세션 초기화 및 로그아웃 (`logout`)
 ```bash
-# 로컬 세션을 Google Drive(my-tools/naver-point/)로 업로드
+naver-point logout
+```
+- 로컬 및 Google Drive 상의 `naver_point_session.json` 파일을 안전하게 삭제하고 세션을 초기화합니다.
+
+### 5. 클라우드 세션 수동 동기화 (`sync`)
+```bash
+# 로컬 세션을 Google Drive(my-tools/naver-point/)로 수동 업로드
 naver-point sync push
 
-# Google Drive에서 최신 세션을 다운로드
+# Google Drive에서 최신 세션을 수동 다운로드
 naver-point sync pull
 ```
 

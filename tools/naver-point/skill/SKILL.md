@@ -38,9 +38,17 @@ naver-point run --headless --json
   ```bash
   naver-point run --headless --json --draw-only
   ```
+- **포인트 잔액만 조회 요청 시**:
+  ```bash
+  naver-point balance --json
+  ```
 - **세션 상태만 점검 요청 시**:
   ```bash
   naver-point status --json
+  ```
+- **세션 초기화/로그아웃 요청 시**:
+  ```bash
+  naver-point logout --json
   ```
 - **Google Drive 세션 동기화 요청 시**:
   ```bash
@@ -56,13 +64,23 @@ naver-point run --headless --json
 ## 📊 3. Output Specification & Agent Reporting (출력 규격 및 보고 지침)
 
 ### 표준 출력 규격 (stdout JSON)
-- **성공 시 (`status: Success`)**:
+- **수집 성공 시 (`status: Success`)**:
   ```json
   {
     "status": "Success",
     "benefit_clicked": 4,
     "random_draws": 2,
+    "starting_balance": 14200,
+    "ending_balance": 14225,
+    "earned_points": 25,
     "session_synced": true
+  }
+  ```
+- **잔액 조회 성공 시 (`status: Success`)**:
+  ```json
+  {
+    "status": "Success",
+    "balance": 14225
   }
   ```
 - **세션 만료 시 (`status: SessionExpired`)**:
@@ -76,15 +94,16 @@ naver-point run --headless --json
   ```json
   {
     "status": "Fail",
-    "error_message": "Network timeout while loading campaign page"
+    "error_message": "Network timeout while loading campaign page",
+    "screenshot_path": "logs/error_screenshot.png"
   }
   ```
 
 ### 에이전트 응답 보고 가이드라인
 - `status`가 `"Success"`인 경우:
-  - 수집된 혜택 버튼 수(`benefit_clicked`)와 랜덤 카드 뽑기 횟수(`random_draws`)를 명확히 사용자에게 보고합니다.
-  - *예시: "네이버 포인트 수집이 완료되었습니다! 혜택 포인트 4건 클릭 및 랜덤 카드 2회 뽑기를 성공적으로 마쳤습니다."*
+  - 수집된 혜택 수(`benefit_clicked`), 카드 뽑기 횟수(`random_draws`), 실제 적립된 포인트(`earned_points`) 및 최종 잔액(`ending_balance`)을 명확히 요약하여 보고합니다.
+  - *예시: "네이버 포인트 수집 완료! 혜택 4건 클릭 및 카드 2회 뽑기를 통해 총 25원이 적립되었습니다. (현재 잔액: 14,225원)"*
 - `status`가 `"SessionExpired"`인 경우:
   - 사용자에게 세션이 만료되었음을 알리고, 터미널에서 `naver-point login` 명령어를 실행하여 브라우저 창에서 로그인해 줄 것을 정중히 안내합니다.
 - `status`가 `"Fail"`인 경우:
-  - `error_message`의 원인을 파악하여 간결히 보고하고, 재시도 또는 상태 점검(`naver-point status`)을 제안합니다.
+  - `error_message`와 함께 에러 캡처 화면(`screenshot_path`)이 보존되었음을 알리고, 재시도 또는 상태 점검(`naver-point status`)을 제안합니다.

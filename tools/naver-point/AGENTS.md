@@ -25,12 +25,12 @@
 ```text
 tools/naver-point/src/
 ├── naver-point.sh          # CLI 전역 심링크 래퍼 (uv run 호출)
-├── main.py                 # Typer 기반 CLI 진입점 (run, login, status, sync)
+├── main.py                 # Typer 기반 CLI 진입점 (run, balance, login, status, logout, sync)
 ├── core/
 │   ├── config.py           # 상수, URL, 파일 경로 및 환경변수
 │   ├── session.py          # NaverSessionManager (Playwright 컨텍스트 & 세션 생명주기)
 │   ├── sync.py             # Google Drive / gog 세션 동기화 엔진
-│   └── collector.py        # 혜택 클릭 및 랜덤 카드 뽑기 핵심 엔진
+│   └── collector.py        # 혜택 클릭, 랜덤 카드 뽑기, 잔액 조회 엔진
 └── tests/                  # 단위 및 통합 테스트
 ```
 
@@ -41,18 +41,21 @@ tools/naver-point/src/
    - `NAVER_CAMPAIGN_URL`: `https://m-campaign.naver.com/npay/gorandomp/?rcode=offpay`
    - `GOOGLE_DRIVE_FOLDER`: `my-tools/naver-point`
    - `SESSION_FILENAME`: `naver_point_session.json`
+   - `ERROR_SCREENSHOT_PATH`: `logs/error_screenshot.png`
 2. **`core/session.py` (`NaverSessionManager`)**:
    - `async with NaverSessionManager(...) as session:` 형태로 자원 관리.
    - 컨텍스트 생성 시 `--disable-blink-features=AutomationControlled` 인자를 필수로 주입하여 네이버 봇 탐지 우회.
    - `NID_SES` 쿠키 존재 여부 및 로그인 페이지 리다이렉트 여부로 로그인 상태 판별.
    - 세션 종료 시 `context.storage_state(path=...)`를 통해 세션 JSON을 갱신.
+   - `clear_session()`: 로컬 및 클라우드 세션 파일을 삭제하고 초기화.
 3. **`core/sync.py` (`SessionSyncManager`)**:
    - Google Drive Desktop 마운트 경로 탐색 (`~/Library/CloudStorage/GoogleDrive-.../내 드라이브/my-tools/naver-point/`).
    - 마운트 미발견 시 시스템의 `gog` CLI (`gog drive download` / `gog drive upload`)를 호출하여 클라우드 세션 동기화.
    - 둘 다 불가할 경우 로컬 OS 표준 경로(`~/.local/share/naver-point/`)로 폴백.
 4. **`core/collector.py`**:
-   - `harvest_benefits(session)`: 혜택 페이지 버튼 탐색 및 순차 클릭.
-   - `harvest_random_draws(session)`: 캠페인 페이지에서 '지금뽑기'/'한번 더' 카드를 탐색하여 클릭, 팝업 닫기, 새로고침 루프 수행.
+   - `fetch_point_balance(session)`: 현재 보유 네이버페이 포인트 잔액을 추출.
+   - `harvest_benefits(session, dry_run=False)`: 혜택 페이지 버튼 탐색 및 순차 클릭 (dry-run 지원).
+   - `harvest_random_draws(session, dry_run=False)`: 캠페인 페이지에서 '지금뽑기'/'한번 더' 카드를 탐색하여 클릭, 팝업 닫기, 새로고침 루프 수행.
 
 ---
 
@@ -79,6 +82,18 @@ SELECTORS = [
 - **팝업 닫기**: `button.btn_close, .close, :text('닫기')` 우선 탐색 후, 미노출 시 화면 상단 모서리(`(10, 10)`) 클릭 폴백.
 - **상태 동기화**: 뽑기 1회 완료 후 반드시 `page.reload(wait_until="domcontentloaded")`를 수행하여 잔여 카드 상태를 재동기화해야 합니다.
 
+### 3.3 포인트 잔액 추출 셀렉터
+혜택 페이지 상단 및 네이버페이 헤더의 잔액 영역:
+```python
+BALANCE_SELECTORS = [
+    ".my_point .num",
+    ".point_num",
+    "a[href*='point'] strong",
+    "span:has-text('P')"
+]
+```
+- 숫자 외의 문자(쉼표, '원', 'P' 등)를 제거하고 정수(`int`)로 파싱하여 반환합니다. 파싱 실패 시 `None`을 반환하며 전체 수집 흐름을 중단시켜서는 안 됩니다.
+
 ---
 
 ## 4. 에이전트 준수 가이드라인 (Crucial Guardrails for Agents)
@@ -87,14 +102,24 @@ SELECTORS = [
    - `naver_point_session.json`, `cookies.json`, `user_data/` 등 세션 파일은 절대로 Git에 커밋하지 않습니다. `.gitignore`에 등록되어 있는지 항상 확인하십시오.
 2. **랜덤 딜레이 유지 (Human-like Timing)**:
    - 모든 페이지 이동 및 클릭 사이에는 반드시 `await asyncio.sleep(random.uniform(1.0, 2.5))`와 같은 비결정론적 지연을 두어야 합니다. 고정된 sleep이나 딜레이 없는 연타는 계정 제재의 원인이 됩니다.
-3. **기계 판독용 JSON 출력 무결성 (JSON stdout Contract)**:
-   - `--json` 플래그가 주어졌을 때, 표준 출력(`stdout`)에는 순수한 단일 라인 JSON 결과만 인쇄되어야 합니다.
+3. **자동 장애 진단 스크린샷 캡처 (Failure Diagnosis)**:
+   - 수집 도중 예기치 못한 셀렉터 미발견이나 예외가 발생할 경우, 프로세스가 종료되기 직전에 `await page.screenshot(path="logs/error_screenshot.png")`을 호출하여 화면 상태를 자동 보존해야 합니다. 에이전트는 이 이미지를 통해 셀렉터 변경 여부를 즉각 진단할 수 있습니다.
+4. **기계 판독용 JSON 출력 무결성 (JSON stdout Contract)**:
+   - `--json` 플래그가 주어졌을 때, 표준 출력(`stdout`)에는 순수한 단일 라인 JSON 결과만 인쇄되어야 합니다:
    ```json
-   {"status": "Success", "benefit_clicked": 3, "random_draws": 5, "session_synced": true}
+   {
+     "status": "Success",
+     "benefit_clicked": 3,
+     "random_draws": 5,
+     "starting_balance": 14200,
+     "ending_balance": 14225,
+     "earned_points": 25,
+     "session_synced": true
+   }
    ```
    - 모든 디버그 로그, 진행 상황 안내, 에러 트레이스는 `stderr`나 로깅 파일(`naver_point.log`)로만 출력해야 합니다.
-4. **`uv` 패키지 관리 준수**:
+5. **`uv` 패키지 관리 준수**:
    - 패키지 추가 시 임의의 `pip`를 사용하지 말고 반드시 `uv add <package>`를 사용하십시오.
    - 전역 CLI 래퍼인 `src/naver-point.sh`는 `uv run python -m main "$@"` 형태로 구동됩니다.
-5. **순수 상대 경로 링크 준수**:
+6. **순수 상대 경로 링크 준수**:
    - 본 문서나 관련 Markdown 내 모든 링크는 순수 상대 경로(`README.md`, `../../AGENTS.md`)를 사용하십시오.
