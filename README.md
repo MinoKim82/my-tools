@@ -12,7 +12,7 @@
 
 | 도구명 | 유형 (Tag) | 기술 스택 | 설명 | 경로 |
 |---|---|---|---|---|
-| *(첫 번째 도구 준비 중)* | - | - | 도구 추가 시 여기에 등록됩니다. | `tools/` |
+| `naver-point` | `[CLI]` `[SCRIPT]` | Python (`uv`, Playwright, Typer, Rich) | 네이버페이 혜택 포인트 자동 수집 및 랜덤 카드 뽑기 CLI (`gog`/Google Drive 세션 동기화 지원) | [`tools/naver-point/`](tools/naver-point/) |
 
 > 💡 **도구 유형 태그**: `[CLI]`, `[MCP]`, `[SCRIPT]`, `[WEB]`, `[BOT]`
 
@@ -49,9 +49,10 @@ my-tools/
 │   └── decisions.md              # 운영 지침 및 결정 기록 (ADR SSOT)
 ├── tools/                        # 모든 개별 도구들의 독립 서브 디렉토리
 │   └── <tool-name>/              # 개별 도구 표준 컨테이너 (Stand-alone)
-│       ├── README.md             # 도구 종합 가이드 (인간 개발자용)
+│       ├── README.md             # 도구 종합 가이드 (인간 개발자 및 CLI 사용자용)
+│       ├── AGENTS.md             # 도구 전용 세부 개발/유지보수 지침서 (서브프로젝트 SSOT)
 │       ├── skill/                # 에이전트 스킬 전용 폴더 (노이즈 격리)
-│       │   └── SKILL.md          # 에이전트 스킬 명세 (/skill-creator로 생성)
+│       │   └── SKILL.md          # 에이전트 런타임 스킬 명세 (/skill-creator로 생성)
 │       └── src/                  # 도구 구현체 및 테스트
 │           ├── pyproject.toml    # 언어별 의존성 정의 (또는 package.json 등)
 │           ├── .env.example      # 환경변수 템플릿
@@ -70,7 +71,7 @@ my-tools/
 이 저장소에서 AI 코딩 에이전트(Antigravity, Claude Code 등)와 함께 작업할 때는 [AGENTS.md](AGENTS.md)의 지침을 엄격히 준수합니다.
 
 - **Zero-Coupling**: 도구 간 소스코드 직접 참조 금지 (완전 자립형).
-- **최소 스캐폴딩 5대 규격**: `README.md`(개발자용), `SKILL.md`(`/skill-creator` 기반 에이전트용), 진입점, 의존성 명세, 테스트.
+- **최소 스캐폴딩 3원화 문서 및 필수 규격**: `README.md`(개발자/사용자용), `AGENTS.md`(도구 유지보수 SSOT), `SKILL.md`(`/skill-creator` 기반 런타임 스킬), 진입점, 의존성 명세, 테스트.
 - **에이전트 스킬 연동**: 새 도구 생성 시 반드시 `/skill-creator` 지침에 따라 트리거 최적화된 `SKILL.md`를 동봉하여 AI 에이전트가 즉각 호출할 수 있도록 구성.
 - **동기화 의무**: 새 도구 추가 시 본 [README.md](README.md)의 **Tools Catalog** 갱신 필수.
 - **자가 갱신(Living Document)**: 새로운 아키텍처 결정이나 노하우는 [docs/decisions.md](docs/decisions.md)에 ADR 형식으로 누적 기록.

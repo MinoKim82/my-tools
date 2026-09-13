@@ -22,13 +22,14 @@
    - 특정 도구 폴더 하나만 다른 머신이나 디렉토리로 복사해도 그 자체로 빌드되고 실행될 수 있는 **완전 자립형(Stand-alone)** 구조를 유지합니다.
    - 도구 간 코드 중복이 발생하더라도 초기에는 무리한 공통 패키지(`packages/shared` 등) 추출을 지양하고, 독립성을 우선시합니다.
 
-2. **미니멀 스캐폴딩 필수 규격 (Minimal Scaffolding Standard)**
-   - 어떤 언어나 형태로 작성되든 모든 도구는 `README.md`를 루트에 두고, 기능별로 `skill/`과 `src/` 서브폴더로 분리합니다:
-     1. `README.md`: 도구의 목적, 필수 요구조건, 설치 방법, CLI 및 스킬 실행 예시 문서화 (인간 개발자 대상).
-     2. `skill/SKILL.md`: AI 에이전트가 해당 도구를 자율적으로 이해하고 트리거할 수 있도록 제공하는 에이전트 스킬 명세서. 반드시 `/skill-creator` 스킬 표준(트리거 최적화 YAML frontmatter, 점진적 공개, 실행 절차)에 따라 생성.
-     3. `src/` 의존성 명세: 언어별 표준 패키지 명세서(`pyproject.toml`, `package.json` 등).
-     4. `src/` 명확한 진입점: 실행 가능한 진입점 파일(`main.py`, `index.ts`, `<tool-name>.sh` 등).
-     5. `src/` 검증 수단: 정상 동작을 확인할 수 있는 최소 단위 테스트 또는 검증 스크립트.
+2. **미니멀 스캐폴딩 3원화 문서 및 필수 규격 (Minimal Scaffolding Standard)**
+   - 어떤 언어나 형태로 작성되든 모든 도구는 `README.md`와 `AGENTS.md`를 루트에 두고, 기능별로 `skill/`과 `src/` 서브폴더로 분리합니다:
+     1. `README.md`: 도구의 목적, 필수 요구조건, 설치 방법, CLI 및 스킬 실행 예시 문서화 (인간 개발자 및 사용자 대상).
+     2. `AGENTS.md`: 도구 단위의 도메인 특화 아키텍처, 핵심 알고리즘/셀렉터 규칙, 세션 관리 및 예외 복구 지침, 유지보수 주의사항 (도구 개발/유지보수 에이전트 대상 SSOT).
+     3. `skill/SKILL.md`: AI 에이전트가 해당 도구를 자율적으로 이해하고 트리거할 수 있도록 제공하는 에이전트 런타임 스킬 명세서. 반드시 `/skill-creator` 스킬 표준(트리거 최적화 YAML frontmatter, 점진적 공개, 실행 절차)에 따라 생성.
+     4. `src/` 의존성 명세: 언어별 표준 패키지 명세서(`pyproject.toml`, `package.json` 등).
+     5. `src/` 명확한 진입점: 실행 가능한 진입점 파일(`main.py`, `index.ts`, `<tool-name>.sh` 등).
+     6. `src/` 검증 수단: 정상 동작을 확인할 수 있는 최소 단위 테스트 또는 검증 스크립트.
 
 3. **표준 툴체인 준수 (Standardized Polyglot Toolchains)**
    - 여러 언어의 사용을 허용하되, 언어별 패키지 관리 및 런타임 툴체인은 정해진 공식 표준을 준수합니다.
@@ -54,9 +55,10 @@ my-tools/
 │   └── decisions.md              # 운영 지침 및 결정 기록 (ADR SSOT)
 ├── tools/                        # 모든 개별 도구들의 독립 서브 디렉토리
 │   └── <tool-name>/              # 개별 도구 표준 컨테이너 (Stand-alone)
-│       ├── README.md             # 도구 종합 가이드 (인간 개발자용)
+│       ├── README.md             # 도구 종합 가이드 (인간 개발자 및 CLI 사용자용)
+│       ├── AGENTS.md             # 도구 전용 세부 개발/유지보수 지침서 (서브프로젝트 SSOT)
 │       ├── skill/                # 에이전트 스킬 전용 디렉토리 (노이즈 격리)
-│       │   └── SKILL.md          # 에이전트 스킬 명세서 (/skill-creator로 생성)
+│       │   └── SKILL.md          # 에이전트 런타임 스킬 명세서 (/skill-creator로 생성)
 │       └── src/                  # 도구 구현체 및 테스트
 │           ├── pyproject.toml    # 언어별 의존성 정의 (또는 package.json 등)
 │           ├── .env.example      # 환경변수 템플릿
@@ -83,18 +85,21 @@ AI 에이전트가 새로운 도구를 추가할 때는 반드시 다음 단계�
    - TypeScript: `cd tools/<tool-name>/src && pnpm init`
    - Shell: `tools/<tool-name>/src/<tool-name>.sh` 스크립트 파일 작성 후 `chmod +x`
 3. **핵심 로직 및 진입점 구현**: `src/` 내에 YAGNI 원칙에 따라 과도한 추상화 없이 직관적인 코드로 작성.
-4. **인간 개발자용 README.md 작성 (`tools/<tool-name>/README.md`)**:
+4. **인간 개발자 및 CLI 사용자용 README.md 작성 (`tools/<tool-name>/README.md`)**:
    - 도구명 및 한 줄 설명
    - 도구 분류 태그: `[CLI]`, `[MCP]`, `[SCRIPT]`, `[WEB]` 등
    - 설치 및 의존성 세팅 명령 (Copy-paste 가능하도록 작성)
    - CLI 실행 방법 및 에이전트 스킬 연동법 안내
-5. **에이전트용 SKILL.md 작성 (`tools/<tool-name>/skill/SKILL.md`)**:
+5. **도구 전용 유지보수 가이드 작성 (`tools/<tool-name>/AGENTS.md`)**:
+   - 해당 도구를 유지보수하거나 기능을 확장할 미래의 AI 에이전트를 위한 서브프로젝트 전용 지침서 작성.
+   - 핵심 아키텍처 다이어그램, 외부 세션/스토리지 연동 규격, DOM 셀렉터 및 스크레이핑 규칙, 에러 복구(Failover) 정책, 수정 시 주의사항(Dont's) 명시.
+6. **에이전트 런타임용 SKILL.md 작성 (`tools/<tool-name>/skill/SKILL.md`)**:
    - AI 에이전트가 해당 도구를 자율적으로 인지하고 필요할 때 즉시 트리거하여 사용할 수 있도록 `skill/` 폴더에 `SKILL.md` 생성.
    - 반드시 `/skill-creator` 스킬의 지침을 따라 작성:
      - YAML frontmatter: `name`과 `description`에 구체적인 트리거 맥락(언제 사용할지 구체적인 키워드 및 상황)을 적극적으로 명시 (언더트리거링 방지).
      - 본문: 3단계 점진적 공개(Metadata -> Body -> Resources), 실행 명령어 및 옵션, 입출력 포맷, 실패 시 해결책.
-6. **검증 및 테스트**: `src/tests/` 단위 테스트 실행 또는 실제 샘플 입력을 통한 동작 검증.
-7. **루트 카탈로그 업데이트**: 루트 [README.md](README.md)의 Tools Catalog 표에 새 도구 추가.
+7. **검증 및 테스트**: `src/tests/` 단위 테스트 실행 또는 실제 샘플 입력을 통한 동작 검증.
+8. **루트 카탈로그 업데이트**: 루트 [README.md](README.md)의 Tools Catalog 표에 새 도구 추가.
 
 ### 4.2 전역 실행 등록 가이드라인 (CLI Symlink & Skill Symlink)
 - **CLI 도구 전역 등록**:
@@ -187,3 +192,4 @@ AI 에이전트가 새로운 도구를 추가할 때는 반드시 다음 단계�
   - `ADR-9`: 운영 지침 및 결정 기록의 docs/ 분리 및 모듈화
   - `ADR-10`: 저장소 내 문서 참조 시 순수 상대 경로 강제 (Portable Relative Links)
   - `ADR-11`: 커밋 타이밍 및 사전 체크리스트(Pre-Commit Checklist) 수립
+  - `ADR-12`: 도구별 전용 AGENTS.md 도입 및 3원화 문서 체계 확립
