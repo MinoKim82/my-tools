@@ -1,0 +1,24 @@
+[project]
+name = "naver-point"
+version = "0.1.0"
+description = "네이버페이 혜택 포인트 자동 수집 및 랜덤 카드 뽑기 CLI 도구"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.40.0",
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+
