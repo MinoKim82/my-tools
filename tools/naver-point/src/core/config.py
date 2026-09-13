@@ -11,7 +11,7 @@ load_dotenv(BASE_DIR / ".env")
 
 # URLs
 NAVER_LOGIN_URL = "https://nid.naver.com/nidlogin.login"
-NAVER_PAY_BENEFIT_URL = "https://pay.naver.com/about/benefit"
+NAVER_PAY_BENEFIT_URL = "https://point.pay.naver.com/pc/main"
 NAVER_CAMPAIGN_URL = "https://m-campaign.naver.com/npay/gorandomp/?rcode=offpay"
 
 # File names

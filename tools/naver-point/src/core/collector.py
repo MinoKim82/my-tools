@@ -10,6 +10,8 @@ from core.config import NAVER_PAY_BENEFIT_URL, NAVER_CAMPAIGN_URL
 logger = logging.getLogger(__name__)
 
 BENEFIT_SELECTORS = [
+    "a:has-text('클릭'):has-text('원')",
+    "button:has-text('클릭'):has-text('원')",
     "button:has-text('포인트 받기')",
     "a:has-text('포인트 받기')",
     "button:has-text('뽑기')",
@@ -18,10 +20,11 @@ BENEFIT_SELECTORS = [
 ]
 
 BALANCE_SELECTORS = [
+    "a[href*='pointshistory']",
+    "a[href*='pointshistory'] span[class*='price']",
+    "a[href*='point.pay.naver.com/pointshistory']",
     ".my_point .num",
     ".point_num",
-    "a[href*='point'] strong",
-    "a[href*='point'] .num",
     "span:has-text('P')",
 ]
 
@@ -44,23 +47,27 @@ async def fetch_point_balance(session) -> Optional[int]:
     """Extract current Naver Pay point balance from page."""
     page = session.page
     try:
-        if "pay.naver.com" not in page.url:
-            await page.goto(NAVER_PAY_BENEFIT_URL, wait_until="domcontentloaded", timeout=10000)
-            await page.wait_for_timeout(1500)
+        if "point.pay.naver.com" not in page.url:
+            await page.goto(NAVER_PAY_BENEFIT_URL, wait_until="domcontentloaded", timeout=12000)
+            await page.wait_for_timeout(2000)
 
         for selector in BALANCE_SELECTORS:
-            el = await page.query_selector(selector)
-            if el and await el.is_visible():
-                text = (await el.text_content() or "").strip()
-                # Find number with commas, e.g. "12,450"
-                match = re.search(r"([\d,]+)", text)
-                if match:
-                    val_str = match.group(1).replace(",", "")
-                    if val_str.isdigit():
-                        return int(val_str)
+            try:
+                el = await page.query_selector(selector)
+                if el and await el.is_visible():
+                    text = (await el.text_content() or "").strip()
+                    # Find number before '원' or 'P', e.g. "잔액35,926원"
+                    match = re.search(r"([\d,]+)\s*(?:원|P)?", text)
+                    if match:
+                        val_str = match.group(1).replace(",", "")
+                        if val_str.isdigit():
+                            return int(val_str)
+            except Exception:
+                continue
     except Exception as e:
         logger.warning(f"Could not extract balance: {e}")
     return None
+
 
 
 async def harvest_benefits(
