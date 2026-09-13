@@ -130,6 +130,67 @@ naver-point sync pull
 
 ---
 
+## 🖥️ 리눅스 서버 / VDI 무인 환경 배포 가이드 (Headless Server Setup)
+
+GUI 디스플레이가 없는 Linux 홈서버, VPS, VDI 환경에서 백그라운드 무인 자동화를 실행하는 절차입니다.
+
+### 1. 파이썬 환경 및 브라우저 시스템 의존성 설치
+```bash
+# 1. uv 패키지 매니저 설치 (미설치 시)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source ~/.bashrc
+
+# 2. 도구 디렉토리로 이동하여 의존성 설치
+cd my-tools/tools/naver-point/src
+uv sync
+
+# 3. Playwright Chromium 브라우저 설치
+uv run playwright install chromium
+
+# 4. [리눅스 필수] 브라우저 구동에 필요한 OS 시스템 라이브러리 설치
+uv run playwright install-deps chromium
+```
+
+### 2. 전역 CLI 등록 (`naver-point`)
+```bash
+cd my-tools
+make link tool=naver-point
+
+# ~/.local/bin이 PATH에 추가되어 있는지 확인 (필요 시 ~/.bashrc에 등록)
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### 3. 세션 이전 (데스크톱 PC -> 서버)
+헤드리스 서버는 브라우저 팝업 로그인을 할 수 없으므로, 데스크톱(Mac/PC)에서 최초 로그인 후 생성된 `naver_point_session.json`을 서버로 전송합니다.
+
+- **방법 A. 데스크톱 터미널에서 `scp`로 복사 (가장 빠름)**:
+  ```bash
+  # 데스크톱(Mac) 터미널에서 실행
+  ssh <server-host> "mkdir -p ~/.local/share/naver-point"
+  scp "<GoogleDrive-마운트경로>/내 드라이브/my-tools/naver-point/naver_point_session.json" <server-host>:~/.local/share/naver-point/naver_point_session.json
+  ```
+- **방법 B. 서버에 `gog` CLI가 설치된 경우**:
+  ```bash
+  naver-point sync pull
+  ```
+
+### 4. 동작 확인 및 Crontab 무인 자동화 등록
+```bash
+# 세션 유효성 점검 (헤드리스)
+naver-point status
+
+# 포인트 수집 1회 실행
+naver-point run
+```
+
+매일 정해진 시간에 무인으로 자동 수집되도록 서버의 `crontab -e`에 등록합니다:
+```cron
+# 매일 오전 9시에 네이버 포인트 자동 수집
+0 9 * * * $HOME/.local/bin/naver-point run >> $HOME/naver_point_cron.log 2>&1
+```
+
+---
+
 ## 📂 파일 구조
 
 ```text
