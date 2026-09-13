@@ -60,11 +60,39 @@ class NaverSessionManager:
             except Exception as e:
                 logger.warning(f"Failed to read existing session JSON: {e}")
 
-        browser = await self.playwright.chromium.launch(
-            headless=self.headless,
-            args=launch_kwargs["args"],
-        )
+        try:
+            browser = await self.playwright.chromium.launch(
+                headless=self.headless,
+                args=launch_kwargs["args"],
+            )
+        except Exception as e:
+            if "Executable doesn't exist" in str(e) or "Please run the following command" in str(e):
+                logger.info("Playwright Chromium browser binary missing. Attempting auto-installation...")
+                import subprocess
+                from core.config import BASE_DIR
+                proc = subprocess.run(
+                    ["uv", "run", "playwright", "install", "chromium"],
+                    cwd=str(BASE_DIR),
+                    capture_output=True,
+                    text=True,
+                )
+                if proc.returncode == 0:
+                    browser = await self.playwright.chromium.launch(
+                        headless=self.headless,
+                        args=launch_kwargs["args"],
+                    )
+                else:
+                    err_msg = (
+                        "Playwright 브라우저 바이너리가 설치되지 않았습니다.\n"
+                        f"홈서버에서 다음 명령을 실행해 주세요:\n"
+                        f"  cd {BASE_DIR} && uv run playwright install chromium\n"
+                        "  (OS 의존성 패키지 부족 시: uv run playwright install --with-deps chromium)"
+                    )
+                    raise RuntimeError(err_msg) from e
+            else:
+                raise
         self.browser = browser
+
 
         context_kwargs = {
             "user_agent": launch_kwargs["user_agent"],
