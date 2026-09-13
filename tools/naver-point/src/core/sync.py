@@ -81,7 +81,7 @@ class SessionSyncManager:
             if file_id:
                 try:
                     self.session_path.parent.mkdir(parents=True, exist_ok=True)
-                    cmd = ["gog", "drive", "download", file_id, "--out", str(self.session_path), "--force"]
+                    cmd = ["gog", "drive", "download", file_id, "--out", str(self.session_path), "--overwrite"]
                     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
                     if proc.returncode == 0:
                         logger.info(f"Successfully pulled session from Google Drive via gog to {self.session_path}")
