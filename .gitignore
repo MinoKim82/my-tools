@@ -3,6 +3,12 @@
 .env.local
 *.env
 
+# Local sync status & cache
+.sync_status.json
+*.sync_status.json
+.cache/
+*.log
+
 # Python
 __pycache__/
 *.py[cod]
