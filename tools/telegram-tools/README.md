@@ -70,9 +70,11 @@ TELEGRAM_PHONE=+821012345678
 
 ```bash
 # 저장소 루트(my-tools/)에서 실행
-make link tool=telegram-tools         # ~/.local/bin/telegram-tools 전역 CLI 심링크
-make link-skill tool=telegram-tools   # ~/.gemini/config/skills/telegram-tools 스킬 심링크
+make link tool=telegram-tools as=telegram   # ~/.local/bin/telegram 단축 CLI 심링크
+make link-skill tool=telegram-tools         # ~/.gemini/config/skills/telegram-tools 스킬 심링크
 ```
+
+> 💡 `as=telegram` 옵션을 주면 터미널에서 `telegram-tools` 대신 짧은 `telegram` 명령어로 호출할 수 있습니다.
 
 ### 최초 세션 인증 (1회 수행)
 ```bash

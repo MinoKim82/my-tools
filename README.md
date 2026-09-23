@@ -30,8 +30,9 @@ make list
 ### 2. 특정 도구 전역 등록 (Dual Interface: CLI & Agent Skill)
 - **CLI 전역 등록 (`~/.local/bin/`)**:
   ```bash
-  make link tool=<tool-name>        # 등록
-  make unlink tool=<tool-name>      # 해제
+  make link tool=<tool-name>                  # 기본 도구명으로 등록 (~/.local/bin/<tool-name>)
+  make link tool=<tool-name> as=<alias>       # 단축 명령어로 등록 (~/.local/bin/<alias>, 예: as=telegram)
+  make unlink tool=<tool-name> [as=<alias>]   # 해제
   ```
   > **참고**: `~/.local/bin`이 `PATH` 환경변수에 추가되어 있어야 합니다 (`export PATH="$HOME/.local/bin:$PATH"` in `~/.zshrc`).
 
