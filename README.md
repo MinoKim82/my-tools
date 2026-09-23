@@ -14,8 +14,9 @@
 |---|---|---|---|---|
 | `naver-point` | `[CLI]` `[SCRIPT]` | Python (`uv`, Playwright, Typer, Rich) | 네이버페이 혜택 포인트 자동 수집 및 랜덤 카드 뽑기 CLI (`gog`/Google Drive 세션 동기화 지원) | [`tools/naver-point/`](tools/naver-point/) |
 | `health-sync` | `[CLI]` `[OBSIDIAN]` `[HEALTH]` | Python (`uv`, Typer, Rich, fitparse) | Health Sync 피트니스 활동 데이터(CSV, FIT, GPX)를 Obsidian 마크다운 및 GPX 경로로 자동 동기화 | [`tools/health-sync/`](tools/health-sync/) |
+| `telegram-tools` | `[CLI]` `[SCRIPT]` `[TELEGRAM]` | Python (`uv`, Telethon, Typer, Rich) | 텔레그램 채팅방 대화 기록 기간별 추출/문서화(JSON, MD) 및 메시지·파일 발송 CLI | [`tools/telegram-tools/`](tools/telegram-tools/) |
 
-> 💡 **도구 유형 태그**: `[CLI]`, `[MCP]`, `[SCRIPT]`, `[WEB]`, `[BOT]`
+> 💡 **도구 유형 태그**: `[CLI]`, `[MCP]`, `[SCRIPT]`, `[WEB]`, `[BOT]`, `[TELEGRAM]`
 
 ---
 
