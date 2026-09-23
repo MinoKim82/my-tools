@@ -14,13 +14,14 @@ description: Export Telegram chat history between specific time ranges into JSON
 - **허용된 명령어**:
   - `status`: 현재 텔레그램 계정 세션 상태 및 내 정보 확인
   - `chats`: 대화방 목록 조회 및 ID/Username 검색
-  - `export`: 특정 대화방의 기간별 대화 기록 추출 및 문서화 (JSON / Markdown)
+  - `read` / `show`: 대화방의 최근 대화 즉시 조회 (터미널 뷰어)
+  - `export`: 특정 대화방의 기간별 대화 기록 추출 및 문서화 (기본: Markdown, 옵션: JSON, All)
   - `send`: 메시지 텍스트, 마크다운 보고서 파일, 또는 첨부파일 전송
   - `logout`: 세션 파일 삭제
 - **사용자 개입 필요 명령어 (`login`)**:
   - `login`은 텔레그램 앱으로 전송되는 인증 코드와 2FA 비밀번호 입력을 요구하므로 에이전트가 직접 실행하지 않고 사용자에게 직접 터미널 실행을 안내합니다.
 - **실행 진입점**:
-  - 시스템 전역 등록 시: `telegram-tools <command>`
+  - 시스템 전역 등록 시: `telegram <command>` 또는 `telegram-tools <command>`
   - 로컬 스크립트 호출 시: `tools/telegram-tools/src/telegram-tools.sh <command>`
 
 ---
@@ -31,39 +32,51 @@ description: Export Telegram chat history between specific time ranges into JSON
 대화방 ID나 정확한 이름을 확인하기 위해 먼저 목록을 조회할 수 있습니다:
 ```bash
 # 최근 대화방 20개 조회
-tools/telegram-tools/src/telegram-tools.sh chats
+telegram chats
 
 # 특정 키워드로 대화방 검색
-tools/telegram-tools/src/telegram-tools.sh chats --search "개발"
+telegram chats --search "개발"
 ```
 
-### 2) 기간별 대화 기록 추출 및 문서화 (`export`)
+### 2) 터미널에서 대화 즉시 조회 (`read` / `show`)
+파일 저장 없이 터미널 화면에서 대화를 바로 확인합니다:
+```bash
+# 최근 20개 대화 바로 출력 (위치 인자 지원)
+telegram read "팀 프로젝트"
+
+# 최근 50개 대화 터미널 페이저(스크롤)로 보기
+telegram show "사내 공지" --limit 50 --pager
+
+# 특정 시간 이후 대화만 조회
+telegram read "@username" --since "2h"
+```
+
+### 3) 기간별 대화 기록 추출 및 문서화 (`export`)
 채팅방 이름(부분 일치), Chat ID, 또는 `@username`을 지정하여 대화 기록을 추출합니다:
 
 ```bash
-# 최근 24시간 동안의 대화 추출 (기본: JSON + MD 생성, ./exports/ 저장)
-tools/telegram-tools/src/telegram-tools.sh export --chat "대화방명_또는_ID" --since "24h"
+# 최근 24시간 동안의 대화 추출 (기본값: Markdown .md 파일만 생성)
+telegram export "대화방명_또는_ID" --since "24h"
 
-# 특정 기간 지정 추출 (어제부터 오늘까지)
-tools/telegram-tools/src/telegram-tools.sh export --chat -1001234567 --since "yesterday" --until "now"
+# JSON 파일만 단독 저장
+telegram export -1001234567 --since "yesterday" --json
 
-# 절대 일시 지정 (KST 기준)
-tools/telegram-tools/src/telegram-tools.sh export --chat "@username" --since "2026-09-20 00:00" --until "2026-09-22 23:59"
-
-# 마크다운 포맷만 생성
-tools/telegram-tools/src/telegram-tools.sh export --chat "회의방" --since "3d" --format md
+# Markdown과 JSON 파일 둘 다 생성
+telegram export "회의방" --since "3d" --all
 
 # 미디어(사진/문서) 파일까지 다운로드
-tools/telegram-tools/src/telegram-tools.sh export --chat "회의방" --since "24h" --download-media
+telegram export "회의방" --since "24h" --download-media
 ```
 
 #### 주요 옵션:
 | 옵션 | 단축키 | 기본값 | 설명 |
 |---|---|---|---|
-| `--chat` | `-c` | *(필수)* | 대화방 ID(정수), `@username`, 대화방 제목(문자열 검색) |
+| `[chat]` | | *(필수)* | 대화방 이름, ID(정수), 또는 `@username` |
 | `--since` | `-s` | `"24h"` | 시작 시각 (`2h`, `24h`, `3d`, `yesterday`, `YYYY-MM-DD HH:MM`) |
 | `--until` | `-u` | `"now"` | 종료 시각 (`now`, `YYYY-MM-DD HH:MM`) |
-| `--format` | `-f` | `"all"` | 출력 형식 (`all`, `md`, `json`) |
+| `--md` | | `True` | 마크다운(`.md`) 파일 저장 (기본값) |
+| `--json` | | `False` | JSON(`.json`) 파일 저장 |
+| `--all` | | `False` | 마크다운과 JSON 모두 저장 |
 | `--output-dir` | `-o` | `"exports"` | 문서 저장 디렉토리 |
 | `--download-media` | | `False` | 사진/문서/음성 파일 로컬 다운로드 활성화 |
 

@@ -272,17 +272,41 @@ def chats(
     asyncio.run(_chats())
 
 
+def determine_export_formats(
+    md: bool, json_opt: bool, all_formats: bool, fmt_opt: Optional[str]
+) -> tuple[bool, bool]:
+    if all_formats or fmt_opt == "all":
+        return True, True
+    if json_opt or fmt_opt == "json":
+        return md, True
+    if md or fmt_opt == "md":
+        return True, False
+    # Default: markdown only
+    return True, False
+
+
 @app.command("export")
 def export(
-    chat: str = typer.Option(..., "--chat", "-c", help="대상 대화방 ID, @username 또는 대화방 제목"),
+    chat: Optional[str] = typer.Argument(None, help="대상 대화방 ID, @username 또는 대화방 제목"),
+    chat_opt: Optional[str] = typer.Option(None, "--chat", "-c", help="대상 대화방 (옵션 플래그)"),
     since: str = typer.Option("24h", "--since", "-s", help="수집 시작 시간 (예: 2h, 3d, yesterday, 2026-09-20 00:00)"),
     until: str = typer.Option("now", "--until", "-u", help="수집 종료 시간 (예: now, 2026-09-22 23:59)"),
-    format: str = typer.Option("all", "--format", "-f", help="문서화 포맷 (all, md, json)"),
+    md: bool = typer.Option(False, "--md", help="마크다운(.md) 파일만 저장 (기본값)"),
+    json_opt: bool = typer.Option(False, "--json", help="JSON(.json) 파일만 저장"),
+    all_formats: bool = typer.Option(False, "--all", help="마크다운과 JSON 모두 저장"),
+    format: Optional[str] = typer.Option(None, "--format", "-f", help="문서화 포맷 (md, json, all)"),
     output_dir: Path = typer.Option(Path("exports"), "--output-dir", "-o", help="문서 저장 디렉토리"),
     download_media: bool = typer.Option(False, "--download-media", help="미디어(사진/문서) 파일 다운로드 활성화"),
     limit: int = typer.Option(1000, "--limit", "-l", help="가져올 최대 메시지 수"),
 ) -> None:
-    """지정된 기간 동안의 대화 기록을 수집하여 JSON 및 Markdown으로 저장"""
+    """지정된 기간 동안의 대화 기록을 수집하여 Markdown 또는 JSON으로 저장"""
+    target_chat = chat or chat_opt
+    if not target_chat:
+        console.print("[bold red]오류:[/bold red] 대화방을 지정해야 합니다. (예: `telegram export '방이름'` 또는 `--chat '방이름'`)")
+        raise typer.Exit(1)
+
+    save_md, save_json = determine_export_formats(md, json_opt, all_formats, format)
+
     local_tz = datetime.now().astimezone().tzinfo or timezone.utc
 
     try:
@@ -300,21 +324,22 @@ def export(
         client = get_client()
         await client.connect()
         if not await client.is_user_authorized():
-            console.print("[bold red]로그인이 필요합니다.[/bold red] 먼저 `telegram-tools login`을 실행하세요.")
+            console.print("[bold red]로그인이 필요합니다.[/bold red] 먼저 `telegram login`을 실행하세요.")
             await client.disconnect()
             raise typer.Exit(1)
 
         try:
-            entity = await resolve_target_entity(client, chat)
+            entity = await resolve_target_entity(client, target_chat)
         except Exception as e:
             console.print(f"[bold red]대화방 조회 실패:[/bold red] {e}")
             await client.disconnect()
             raise typer.Exit(1)
 
         chat_id, chat_title, chat_type, chat_username = get_entity_info(entity)
+        fmt_desc = "Markdown + JSON" if (save_md and save_json) else ("JSON" if save_json else "Markdown")
         console.print(
             f"수집 대상: [bold cyan]{chat_title}[/bold cyan] ({chat_type}, ID: {chat_id})\n"
-            f"기간: [dim]{since_dt.strftime('%Y-%m-%d %H:%M')} ~ {until_dt.strftime('%Y-%m-%d %H:%M')}[/dim]"
+            f"기간: [dim]{since_dt.strftime('%Y-%m-%d %H:%M')} ~ {until_dt.strftime('%Y-%m-%d %H:%M')}[/dim] (포맷: [green]{fmt_desc}[/green])"
         )
 
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -388,7 +413,7 @@ def export(
         base_filename = f"chat_{safe_title}_{chat_id}_{now_str}"
 
         # 1. Export JSON
-        if format in ("all", "json"):
+        if save_json:
             json_file = output_dir / f"{base_filename}.json"
             export_payload = {
                 "chat": {
@@ -409,7 +434,7 @@ def export(
             console.print(f"[green]✓ JSON 저장 완료:[/green] {json_file}")
 
         # 2. Export Markdown
-        if format in ("all", "md"):
+        if save_md:
             md_file = output_dir / f"{base_filename}.md"
             lines = [
                 f"# 💬 대화 기록: {chat_title}",
@@ -457,15 +482,132 @@ def export(
     asyncio.run(_export())
 
 
+def _read_dialog(
+    chat: Optional[str] = typer.Argument(None, help="대상 대화방 ID, @username 또는 대화방 제목"),
+    chat_opt: Optional[str] = typer.Option(None, "--chat", "-c", help="대상 대화방 (옵션 플래그)"),
+    limit: int = typer.Option(20, "--limit", "-l", help="조회할 최근 메시지 수"),
+    since: Optional[str] = typer.Option(None, "--since", "-s", help="시작 시간 필터링 (예: 2h, yesterday)"),
+    pager: bool = typer.Option(False, "--pager", "-p", help="터미널 페이저(스크롤)로 보기"),
+) -> None:
+    """터미널에서 대화방의 최근 대화를 즉시 조회 (read, show, history 동일)"""
+    target_chat = chat or chat_opt
+    if not target_chat:
+        console.print("[bold red]오류:[/bold red] 대화방을 지정해야 합니다. (예: `telegram read '방이름'` 또는 `telegram show '방이름'`)")
+        raise typer.Exit(1)
+
+    local_tz = datetime.now().astimezone().tzinfo or timezone.utc
+    since_utc = None
+    if since:
+        try:
+            since_dt = parse_relative_or_absolute_time(since, local_tz)
+            since_utc = since_dt.astimezone(timezone.utc)
+        except ValueError as e:
+            console.print(f"[bold red]시간 파싱 오류:[/bold red] {e}")
+            raise typer.Exit(1)
+
+    async def _run():
+        client = get_client()
+        await client.connect()
+        if not await client.is_user_authorized():
+            console.print("[bold red]로그인이 필요합니다.[/bold red] 먼저 `telegram login`을 실행하세요.")
+            await client.disconnect()
+            raise typer.Exit(1)
+
+        try:
+            entity = await resolve_target_entity(client, target_chat)
+        except Exception as e:
+            console.print(f"[bold red]대화방 조회 실패:[/bold red] {e}")
+            await client.disconnect()
+            raise typer.Exit(1)
+
+        chat_id, chat_title, chat_type, _ = get_entity_info(entity)
+        me = await client.get_me()
+        my_id = me.id if me else 0
+
+        raw_messages = []
+        async for msg in client.iter_messages(entity, limit=limit):
+            if since_utc and msg.date < since_utc:
+                break
+            raw_messages.append(msg)
+
+        await client.disconnect()
+        raw_messages.reverse()
+
+        def render_messages():
+            console.print(f"\n[bold cyan]💬 {chat_title}[/bold cyan] [dim]({chat_type}, ID: {chat_id} | 최근 {len(raw_messages)}건)[/dim]\n" + "─" * 60)
+
+            # Map for reply text lookup
+            msg_map = {m.id: m for m in raw_messages}
+
+            for msg in raw_messages:
+                msg_local = msg.date.astimezone(local_tz)
+                time_str = msg_local.strftime("%m-%d %H:%M")
+
+                is_me = (msg.sender_id == my_id)
+                sender_name = "나" if is_me else "Unknown"
+                if not is_me and msg.sender:
+                    _, s_name, _, _ = get_entity_info(msg.sender)
+                    sender_name = s_name
+
+                sender_style = "bold green" if is_me else "bold yellow"
+
+                # Reply quote
+                if msg.reply_to_msg_id and msg.reply_to_msg_id in msg_map:
+                    replied = msg_map[msg.reply_to_msg_id]
+                    rep_name = "나" if replied.sender_id == my_id else "상대방"
+                    if replied.sender:
+                        _, r_name, _, _ = get_entity_info(replied.sender)
+                        rep_name = r_name
+                    rep_text = (replied.message or "").replace("\n", " ").strip()
+                    if len(rep_text) > 40:
+                        rep_text = rep_text[:37] + "..."
+                    console.print(f"  [dim]↳ [{rep_name}]: {rep_text}[/dim]")
+
+                # Header line
+                console.print(f"[{sender_style}]{sender_name}[/{sender_style}] [dim]({time_str})[/dim]")
+
+                # Text content
+                if msg.message:
+                    # Indent slightly for clean look
+                    for line in msg.message.split("\n"):
+                        console.print(f"  {line}")
+
+                # Media tag
+                if msg.media:
+                    m_type = "사진" if isinstance(msg.media, MessageMediaPhoto) else "문서/파일"
+                    console.print(f"  [dim magenta]📎 [{m_type}][/dim magenta]")
+
+                console.print()
+
+        if pager:
+            with console.pager(styles=True):
+                render_messages()
+        else:
+            render_messages()
+
+    asyncio.run(_run())
+
+
+# Register read, show, and history commands
+app.command("read", help="터미널에서 대화방의 최근 대화를 즉시 조회")(_read_dialog)
+app.command("show", help="터미널에서 대화방의 최근 대화를 즉시 조회 (read와 동일)")(_read_dialog)
+app.command("history", help="터미널에서 대화방의 과거 대화기록 조회 (read와 동일)")(_read_dialog)
+
+
 @app.command("send")
 def send(
-    chat: str = typer.Option(..., "--chat", "-c", help="대상 대화방 ID, @username 또는 대화방 제목"),
+    chat: Optional[str] = typer.Argument(None, help="대상 대화방 ID, @username 또는 대화방 제목"),
+    chat_opt: Optional[str] = typer.Option(None, "--chat", "-c", help="대상 대화방 (옵션 플래그)"),
     text: Optional[str] = typer.Option(None, "--text", "-t", help="보낼 메시지 본문"),
     file: Optional[Path] = typer.Option(None, "--file", help="본문으로 보낼 텍스트/마크다운 파일 경로"),
     attach: Optional[Path] = typer.Option(None, "--attach", help="첨부할 사진 또는 문서 파일 경로"),
     silent: bool = typer.Option(False, "--silent", help="무음 메시지로 전송"),
 ) -> None:
     """지정된 대화방으로 메시지 또는 파일 발송 (4096자 초과 시 자동 분할)"""
+    target_chat = chat or chat_opt
+    if not target_chat:
+        console.print("[bold red]오류:[/bold red] 대화방을 지정해야 합니다. (예: `telegram send '방이름' --text '안녕'`)")
+        raise typer.Exit(1)
     if not text and not file and not attach:
         console.print("[bold red]오류:[/bold red] --text, --file 또는 --attach 중 적어도 하나를 지정해야 합니다.")
         raise typer.Exit(1)
@@ -488,7 +630,7 @@ def send(
             raise typer.Exit(1)
 
         try:
-            entity = await resolve_target_entity(client, chat)
+            entity = await resolve_target_entity(client, target_chat)
         except Exception as e:
             console.print(f"[bold red]대화방 조회 실패:[/bold red] {e}")
             await client.disconnect()

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import pytest
-from main import chunk_text, parse_relative_or_absolute_time
+from main import chunk_text, determine_export_formats, parse_relative_or_absolute_time
 
 
 def test_time_parser_relative():
@@ -39,3 +39,20 @@ def test_chunk_text():
     assert chunks[0] == "Paragraph 1"
     assert chunks[1] == "Paragraph 2"
     assert chunks[2] == "Paragraph 3"
+
+
+def test_determine_export_formats():
+    # Default: md only
+    assert determine_export_formats(False, False, False, None) == (True, False)
+    # Explicit --json
+    assert determine_export_formats(False, True, False, None) == (False, True)
+    # Explicit --md
+    assert determine_export_formats(True, False, False, None) == (True, False)
+    # Both --md and --json
+    assert determine_export_formats(True, True, False, None) == (True, True)
+    # --all
+    assert determine_export_formats(False, False, True, None) == (True, True)
+    # Old format flag compatibility
+    assert determine_export_formats(False, False, False, "all") == (True, True)
+    assert determine_export_formats(False, False, False, "json") == (False, True)
+

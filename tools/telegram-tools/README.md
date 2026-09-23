@@ -113,34 +113,53 @@ telegram-tools chats --limit 50
 
 ---
 
-### 2. 대화 기록 추출 및 문서화 (`export`)
+### 2. 대화 기록 터미널 즉시 조회 (`read` / `show` / `history`)
 
-지정한 대화방에서 특정 기간 사이의 메시지를 추출하여 JSON 및 Markdown 파일로 저장합니다.
+파일 저장 없이 터미널 화면에서 대화방의 최근 대화를 즉시 확인합니다:
 
 ```bash
-# 최근 24시간 동안의 대화 추출 (기본: JSON + MD 동시 생성)
-telegram-tools export --chat "@proj_dev_room" --since "24h"
+# 대화방의 최근 20개 메시지 출력 (위치 인자 지원)
+telegram read "팀 프로젝트"
 
-# 특정 날짜 범위 대화 추출 (방 ID 직접 지정)
-telegram-tools export --chat -1001234567 --since "2026-09-20 00:00" --until "2026-09-22 23:59"
+# 최근 50개 메시지 터미널 페이저(less 스크롤)로 보기
+telegram show "사내 공지" --limit 50 --pager
 
-# 마크다운 파일만 생성하고 미디어 파일까지 다운로드
-telegram-tools export --chat "팀 프로젝트" --since "yesterday" --format md --download-media
+# 특정 시간 이후 대화만 조회
+telegram history "@proj_dev_room" --since "2h"
+```
 
-# 저장 경로 지정 (기본: ./exports/)
-telegram-tools export --chat -1001234567 --since "3d" --output-dir "./meeting-logs"
+---
+
+### 3. 대화 기록 추출 및 문서화 (`export`)
+
+지정한 대화방에서 특정 기간 사이의 메시지를 추출하여 Markdown 또는 JSON 파일로 저장합니다.
+
+```bash
+# 1. 최근 24시간 대화 추출 (기본값: Markdown .md 파일만 1개 생성)
+telegram export "팀 프로젝트" --since "24h"
+
+# 2. JSON 데이터 포맷으로만 저장
+telegram export "팀 프로젝트" --since "yesterday" --json
+
+# 3. Markdown과 JSON 파일 둘 다 생성
+telegram export 777000 --since "2h" --all
+
+# 4. 특정 날짜 범위 지정 및 미디어 파일까지 다운로드
+telegram export -1001234567 --since "2026-09-20 00:00" --until "2026-09-22 23:59" --download-media --output-dir "./logs"
 ```
 
 #### 주요 옵션:
 | 옵션 | 단축키 | 기본값 | 설명 |
 |---|---|---|---|
-| `--chat` | `-c` | *(필수)* | 대상 대화방 ID, `@username`, 또는 대화방 제목(문자열 검색) |
+| `[chat]` | | *(필수)* | 위치 인자로 대화방 이름, ID, 또는 `@username` 바로 입력 (또는 `--chat` 플래그 사용) |
 | `--since` | `-s` | `"24h"` | 수집 시작 시간 (상대 시간: `2h`, `24h`, `3d`, `yesterday` / 절대 시간: `YYYY-MM-DD HH:MM`) |
 | `--until` | `-u` | `"now"` | 수집 종료 시간 (기본값: 현재 시각) |
-| `--format` | `-f` | `"all"` | 출력 포맷 (`md`, `json`, `all`) |
+| `--md` | | `True` | 마크다운(`.md`) 파일 저장 (기본값) |
+| `--json` | | `False` | JSON(`.json`) 파일 저장 |
+| `--all` | | `False` | 마크다운과 JSON 모두 저장 |
 | `--output-dir` | `-o` | `"exports"` | 문서 및 미디어가 저장될 디렉토리 경로 |
 | `--download-media` | | `False` | 사진/문서/음성 미디어 파일 다운로드 활성화 |
-| `--limit` | | `1000` | 가져올 최대 메시지 수 제한 |
+| `--limit` | `-l` | `1000` | 가져올 최대 메시지 수 제한 |
 
 ---
 
