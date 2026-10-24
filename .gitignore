@@ -6,6 +6,8 @@
 # Local sync status & cache
 .sync_status.json
 *.sync_status.json
+state.json
+*.state.json
 .cache/
 *.log
 
