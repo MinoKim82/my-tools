@@ -1,4 +1,5 @@
 import base64
+import csv
 import json
 import logging
 import os
@@ -275,30 +276,83 @@ class FinanceHandler(BaseHandler):
             from playwright.sync_api import sync_playwright
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
-                page = browser.new_page()
-                page.goto(f"file://{os.path.abspath(html_path)}", timeout=10000)
+                context = browser.new_context()
+                page = context.new_page()
 
-                # 패스워드 입력창 찾기
-                pwd_input = page.locator("input[type='password']").first
-                if pwd_input.count() > 0:
-                    pwd_input.fill(password)
-                    page.keyboard.press("Enter")
+                # 알림창(alert) 자동 닫기 핸들러
+                page.on("dialog", lambda dialog: dialog.dismiss())
 
-                    # 복호화 렌더링 대기
-                    page.wait_for_timeout(2500)
+                page.goto(f"file://{os.path.abspath(html_path)}", timeout=15000)
 
-                    # 텍스트 추출
-                    content = page.content()
-                    text = page.inner_text("body")
+                # 1. 패스워드 직접 주입 (현대카드 p2_temp 등 hidden 트릭 우회)
+                injected = page.evaluate("""(pw) => {
+                    const temp = document.querySelector('input[name="p2_temp"]');
+                    if (temp) temp.style.display = 'none';
 
-                    # 금액 정규식 탐색 (예: 청구금액 450,000원, 결제예정금액 1,230,000원)
-                    matches = re.findall(r"(?:청구금액|결제예정금액|총\s*결제금액|이번달\s*청구금액|결제금액)[^\d]{1,20}([\d,]{3,12})\s*원", text)
+                    const pwd = document.getElementById('password') || 
+                                document.querySelector('input[type="password"]') ||
+                                document.decForm?.p2;
+                    if (pwd) {
+                        pwd.style.display = 'inline-block';
+                        pwd.value = pw;
+                        return true;
+                    }
+                    return false;
+                }""", password)
+
+                if not injected:
+                    browser.close()
+                    return None
+
+                # 2. 복호화 실행 함수(doAction 또는 submit) 호출
+                page.evaluate("""() => {
+                    if (typeof doAction === 'function') {
+                        doAction();
+                    } else {
+                        const confirmBtn = document.getElementById('confirm') || 
+                                           document.querySelector('input[type="submit"]') || 
+                                           document.querySelector('input[type="image"]');
+                        if (confirmBtn) {
+                            confirmBtn.click();
+                        } else if (document.decForm) {
+                            document.decForm.submit();
+                        }
+                    }
+                }""")
+
+                # 렌더링 대기
+                page.wait_for_timeout(3500)
+
+                # 3. 모든 프레임(iframe) 및 열린 페이지에서 텍스트 수집
+                all_text = page.inner_text("body")
+                for frame in page.frames:
+                    try:
+                        all_text += "\n" + frame.inner_text("body")
+                    except Exception:
+                        pass
+                for p_extra in context.pages:
+                    try:
+                        all_text += "\n" + p_extra.inner_text("body")
+                    except Exception:
+                        pass
+
+                # 4. 금액 정규식 탐색
+                patterns = [
+                    r"(?:청구금액|결제예정금액|총\s*결제금액|이번달\s*청구금액|결제금액|이용대금)[^\d]{1,25}([\d,]{3,12})\s*원",
+                    r"([\d,]{3,12})\s*원\s*(?:결제예정|청구)",
+                ]
+
+                clean_num = None
+                for pat in patterns:
+                    matches = re.findall(pat, all_text)
                     if matches:
-                        clean_num = int(re.sub(r"[^\d]", "", matches[0]))
-                        browser.close()
-                        return clean_num
+                        cand = int(re.sub(r"[^\d]", "", matches[0]))
+                        if cand > 0:
+                            clean_num = cand
+                            break
 
                 browser.close()
+                return clean_num
         except Exception as e:
             logger.warning(f"Decryption attempt failed for {html_path}: {e}")
         return None
@@ -357,16 +411,45 @@ class FinanceHandler(BaseHandler):
             logger.info(f"Google Sheets API sync skipped (fallback to CSV ledger): {e}")
 
     def _sync_to_obsidian(self, items: List[Dict[str, Any]], config: MailSyncConfig) -> None:
-        """옵시디언 areas/family/finance/가족 금융 대시보드.md 스마트 갱신"""
+        """옵시디언 areas/family/finance/가족 금융 대시보드.md 스마트 갱신 (전체 원장 기반 최신화)"""
         if not config.is_local_vault:
             return
 
         dashboard_path = os.path.join(config.family_finance_dir, "가족 금융 대시보드.md")
+        csv_path = os.path.join(config.family_finance_dir, f"{config.spreadsheet_name}.csv")
         now_str = datetime.now().strftime("%Y-%m-%d")
 
-        # 최신 월별 아이템 정렬 (12일 현대, 13일 삼성, 14일 우리, 15일 우리은행)
-        sorted_items = sorted(items, key=lambda x: x.get("due_date", ""))
-        total_sum = sum(it.get("total_amount", 0) for it in sorted_items)
+        # 전체 원장 CSV 로드 (이전 이력과 병합된 상태 보장)
+        all_items: List[Dict[str, Any]] = []
+        if os.path.exists(csv_path):
+            try:
+                with open(csv_path, "r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for r in reader:
+                        # 숫자형 필드 변환
+                        r["principal"] = int(r.get("principal") or 0)
+                        r["interest"] = int(r.get("interest") or 0)
+                        r["total_amount"] = int(r.get("total_amount") or 0)
+                        all_items.append(r)
+            except Exception as e:
+                logger.error(f"Failed to read CSV for dashboard sync: {e}")
+
+        if not all_items:
+            all_items = items
+
+        if not all_items:
+            return
+
+        # 최신 청구월 도출 (예: 2026-10)
+        billing_months = sorted(list({it.get("billing_month", "") for it in all_items if it.get("billing_month")}))
+        latest_month = billing_months[-1] if billing_months else datetime.now().strftime("%Y-%m")
+
+        # 이번 달 아이템과 과거 아이템 분리
+        current_month_items = sorted(
+            [it for it in all_items if it.get("billing_month") == latest_month],
+            key=lambda x: x.get("due_date", "")
+        )
+        current_month_total = sum(it.get("total_amount", 0) for it in current_month_items)
 
         # 이번 달 요약 마크다운 렌더링
         lines = [
@@ -383,25 +466,25 @@ class FinanceHandler(BaseHandler):
             "",
             "# 💳 우리 가족 금융 및 결제 대시보드",
             "",
-            "> [!INFO] 📊 **이번 달 결제 및 상환 종합 KPI 요약**",
-            f"> - **이번 달 총 출금 소요액**: **{total_sum:,}원**",
+            f"> [!INFO] 📊 **{latest_month}월 결제 및 상환 종합 KPI 요약**",
+            f"> - **이번 달 총 출금 소요액**: **{current_month_total:,}원**",
             "> - **주요 출금 집중 기간**: **매월 12일 ~ 15일 (4일 연속 집중 출금)**",
             "> - **주요 출금 통장**: **우리은행(주거래 통장)**",
             f"> - **데이터 원본 스프레드시트**: [[{config.spreadsheet_name}.csv|{config.spreadsheet_name} (CSV 원장)]]",
             "",
             "---",
             "",
-            "## 📅 이번 달 결제 캘린더 (12~15일 타임라인)",
+            f"## 📅 이번 달 결제 캘린더 ({latest_month}, 12~15일 타임라인)",
             "",
             "| 결제일 | 구분 | 금융기관 | 항목명 | 금액(원) | 적용이율 | 출금계좌 | 상태 | 명세서 |",
             "| :--- | :--- | :--- | :--- | :---: | :---: | :--- | :---: | :---: |",
         ]
 
-        for it in sorted_items:
+        for it in current_month_items:
             amt_str = f"{it.get('total_amount', 0):,}원"
             link = f"[[{it.get('statement_url')}]]" if it.get("statement_url") else "-"
             lines.append(
-                f"| **{it.get('due_date')}** | {it.get('category')} | **{it.get('institution')}** | {it.get('item_name')} | **{amt_str}** | {it.get('interest_rate')} | {it.get('withdrawal_account')} | {it.get('status')} | {link} |"
+                f"| **{it.get('due_date')}** | {it.get('category')} | **{it.get('institution')}** | {it.get('item_name')} | **{amt_str}** | {it.get('interest_rate') or '-'} | {it.get('withdrawal_account')} | {it.get('status')} | {link} |"
             )
 
         lines.extend([
@@ -412,12 +495,15 @@ class FinanceHandler(BaseHandler):
             "",
         ])
 
-        # 대출 항목만 별도 브리핑
-        loan_items = [it for it in sorted_items if it.get("category") == "LOAN"]
+        # 대출 항목 브리핑 (최신 내역 우선)
+        loan_items = [it for it in current_month_items if it.get("category") == "LOAN"]
+        if not loan_items:
+            loan_items = [it for it in all_items if it.get("category") == "LOAN"]
+
         if loan_items:
-            loan = loan_items[0]
+            loan = loan_items[-1]
             lines.extend([
-                f"> [!NOTE] 📈 **우리은행 일반대출 금리 및 원리금 현황**",
+                f"> [!NOTE] 📈 **우리은행 일반대출 금리 및 원리금 현황** ({loan.get('billing_month')} 기준)",
                 f"> - **적용 금리**: **{loan.get('interest_rate')}**",
                 f"> - **월 상환 원금**: **{loan.get('principal', 0):,}원**",
                 f"> - **월 납입 이자**: **{loan.get('interest', 0):,}원**",
@@ -425,9 +511,42 @@ class FinanceHandler(BaseHandler):
                 "",
             ])
         else:
-            lines.append("> *이번 달 수신된 대출 통지 내역이 없습니다.*")
+            lines.append("> *수신된 대출 통지 내역이 없습니다.*")
+
+        # 과거 월별 이력 요약 테이블 (역순)
+        lines.extend([
+            "---",
+            "",
+            "## 📜 월별 결제 이력 요약 (최근순)",
+            "",
+            "| 청구월 | 현대카드 | 삼성카드 | 우리카드 | 우리은행 대출 | 월 총 결제액 |",
+            "| :---: | :---: | :---: | :---: | :---: | :---: |",
+        ])
+
+        month_map: Dict[str, Dict[str, int]] = {}
+        for it in all_items:
+            m = it.get("billing_month")
+            if not m:
+                continue
+            if m not in month_map:
+                month_map[m] = {"현대카드": 0, "삼성카드": 0, "우리카드": 0, "우리은행": 0, "total": 0}
+            inst = it.get("institution", "")
+            amt = it.get("total_amount", 0)
+            if inst in month_map[m]:
+                month_map[m][inst] += amt
+            month_map[m]["total"] += amt
+
+        for m in sorted(month_map.keys(), reverse=True):
+            data = month_map[m]
+            h_str = f"{data['현대카드']:,}원" if data['현대카드'] > 0 else "-"
+            s_str = f"{data['삼성카드']:,}원" if data['삼성카드'] > 0 else "-"
+            w_str = f"{data['우리카드']:,}원" if data['우리카드'] > 0 else "-"
+            l_str = f"{data['우리은행']:,}원" if data['우리은행'] > 0 else "-"
+            tot_str = f"**{data['total']:,}원**"
+            lines.append(f"| **{m}** | {h_str} | {s_str} | {w_str} | {l_str} | {tot_str} |")
 
         lines.extend([
+            "",
             "---",
             "",
             "## 🔗 가족 허브 바로가기",
@@ -452,7 +571,6 @@ class FinanceHandler(BaseHandler):
             content = f.read()
 
         if "가족 금융 대시보드" not in content:
-            # 가족 통합 보험 관제 바로 위에 가족 금융 결제 관리 섹션 추가
             section_to_insert = "## 💳 가족 금융 및 정기 결제 관리\n- 📊 [[가족 금융 대시보드]] (카드 3사 청구액 및 대출 원리금 12~15일 타임라인)\n\n"
             if "## 🛡️ 가족 통합 보험 관제" in content:
                 content = content.replace("## 🛡️ 가족 통합 보험 관제", f"{section_to_insert}## 🛡️ 가족 통합 보험 관제")
@@ -465,45 +583,70 @@ class FinanceHandler(BaseHandler):
     def register_cli(self, sub_app: typer.Typer) -> None:
         """finance 핸들러 전용 서브커맨드 등록"""
         @sub_app.command("calendar")
-        def show_calendar():
-            """이번 달 12~15일 결제 일정 및 통장별 필요 잔고 브리핑"""
+        def show_calendar(
+            month: Optional[str] = typer.Option(None, "--month", "-m", help="조회할 청구월 (예: 2026-10)")
+        ):
+            """지정/최신 청구월의 12~15일 결제 일정 및 통장별 필요 잔고 브리핑"""
+            import csv
             from core.config import load_config
             cfg = load_config()
             console = Console()
 
-            dashboard_path = os.path.join(cfg.family_finance_dir, "가족 금융 대시보드.md")
-            if not os.path.exists(dashboard_path):
-                console.print("[yellow]아직 동기화된 금융 대시보드 파일이 없습니다. 먼저 'mail-sync run'을 실행해 주세요.[/yellow]")
+            csv_path = os.path.join(cfg.family_finance_dir, f"{cfg.spreadsheet_name}.csv")
+            if not os.path.exists(csv_path):
+                console.print("[yellow]아직 동기화된 금융 원장(CSV) 파일이 없습니다. 먼저 'mail-sync run'을 실행해 주세요.[/yellow]")
                 return
 
-            console.print("\n[bold cyan]📅 이번 달 가족 금융 결제 캘린더 (12~15일 집중 출금)[/bold cyan]\n")
-            with open(dashboard_path, "r", encoding="utf-8") as f:
-                text = f.read()
+            all_items = []
+            with open(csv_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for r in reader:
+                    r["total_amount"] = int(r.get("total_amount") or 0)
+                    r["principal"] = int(r.get("principal") or 0)
+                    r["interest"] = int(r.get("interest") or 0)
+                    all_items.append(r)
 
-            # 마크다운 테이블 부분 추출하여 Rich Table로 표시
+            if not all_items:
+                console.print("[yellow]원장 파일에 기록된 데이터가 없습니다.[/yellow]")
+                return
+
+            billing_months = sorted(list({it.get("billing_month", "") for it in all_items if it.get("billing_month")}))
+            target_month = month or (billing_months[-1] if billing_months else datetime.now().strftime("%Y-%m"))
+
+            month_items = sorted(
+                [it for it in all_items if it.get("billing_month") == target_month],
+                key=lambda x: x.get("due_date", "")
+            )
+
+            if not month_items:
+                console.print(f"[yellow]{target_month}에 해당하는 결제 내역이 없습니다.[/yellow]")
+                return
+
+            total_sum = sum(it.get("total_amount", 0) for it in month_items)
+
+            console.print(f"\n[bold cyan]📅 {target_month} 가족 금융 결제 캘린더 (12~15일 집중 출금)[/bold cyan]\n")
+
             table = Table(show_header=True, header_style="bold magenta")
-            table.add_column("결제일", style="dim")
+            table.add_column("결제일", style="bold yellow")
             table.add_column("구분")
             table.add_column("금융기관", style="bold green")
             table.add_column("항목명")
-            table.add_column("금액", justify="right", style="bold yellow")
-            table.add_column("이율")
+            table.add_column("금액", justify="right", style="bold red")
+            table.add_column("이율/비고")
             table.add_column("출금계좌", style="cyan")
-            table.add_column("상태")
 
-            in_table = False
-            for line in text.split("\n"):
-                if line.startswith("| 결제일"):
-                    in_table = True
-                    continue
-                if in_table and line.startswith("| :---"):
-                    continue
-                if in_table and line.startswith("|"):
-                    parts = [p.strip().replace("**", "") for p in line.split("|")[1:-1]]
-                    if len(parts) >= 8:
-                        table.add_row(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7])
-                elif in_table and not line.startswith("|"):
-                    break
+            for it in month_items:
+                extra = it.get("interest_rate") if it.get("category") == "LOAN" else "-"
+                table.add_row(
+                    it.get("due_date", ""),
+                    it.get("category", ""),
+                    it.get("institution", ""),
+                    it.get("item_name", ""),
+                    f"{it.get('total_amount', 0):,}원",
+                    extra,
+                    it.get("withdrawal_account", ""),
+                )
 
             console.print(table)
-            console.print("\n[dim]ℹ️ 자세한 내역은 Obsidian [[가족 금융 대시보드]] 또는 Google Sheets 원장을 확인하세요.[/dim]\n")
+            console.print(f"\n[bold green]💰 {target_month}월 총 필요 출금액: {total_sum:,}원 (우리은행 주거래 계좌)[/bold green]\n")
+            console.print("[dim]ℹ️ 자세한 내역은 Obsidian [[가족 금융 대시보드]] 또는 [[가족_금융_원장.csv]]를 확인하세요.[/dim]\n")
