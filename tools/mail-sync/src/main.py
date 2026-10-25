@@ -41,13 +41,15 @@ def run_sync(
     days: int = typer.Option(1, "--days", "-d", help="검색 대상 기간 (기본값: 최근 1일)"),
     month: Optional[str] = typer.Option(None, "--month", "-m", help="특정 연월 대상 (예: 2026-10)"),
     all_time: bool = typer.Option(False, "--all", "-a", help="기간 제한 없이 전체 메일 스캔"),
+    force: bool = typer.Option(False, "--force", "-f", help="기처리된 메일도 강제 재처리 및 원장 최신화"),
 ):
     """지정된 기간(기본: 최근 1일)의 메일을 스캔하여 파싱 및 동기화 수행"""
     is_tty = sys.stdout.isatty()
     target_handlers = [handler] if handler else None
 
     if is_tty:
-        console.print(f"\n[bold cyan]🚀 mail-sync 실행 시작 (기본 검색 범위: 최근 {days}일)[/bold cyan]\n")
+        scope_str = "전체 기간(All-Time)" if all_time else (f"{month}월" if month else f"최근 {days}일")
+        console.print(f"\n[bold cyan]🚀 mail-sync 실행 시작 (검색 범위: {scope_str})[/bold cyan]\n")
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -67,6 +69,7 @@ def run_sync(
                 days=days,
                 month=month,
                 all_time=all_time,
+                force=force,
                 progress_callback=on_progress,
             )
             progress.update(main_task, description="[bold green]동기화 완료!")
@@ -77,6 +80,7 @@ def run_sync(
             days=days,
             month=month,
             all_time=all_time,
+            force=force,
             progress_callback=lambda msg, _: logger.info(msg),
         )
 

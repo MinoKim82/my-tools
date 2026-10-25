@@ -2,6 +2,7 @@ import importlib
 import logging
 import os
 import pkgutil
+from datetime import datetime
 from typing import Callable, Dict, List, Optional
 from core.base import BaseHandler, HandlerResult
 from core.config import MailSyncConfig
@@ -67,6 +68,7 @@ class Dispatcher:
         days: int = 1,
         month: Optional[str] = None,
         all_time: bool = False,
+        force: bool = False,
         progress_callback: Optional[Callable[[str, Optional[float]], None]] = None,
     ) -> List[HandlerResult]:
         """등록된 핸들러 실행 및 2단 파이프라인 수행"""
@@ -87,15 +89,33 @@ class Dispatcher:
             if progress_callback:
                 progress_callback(f"{msg_prefix} Gmail 검색 조건 생성 및 조회 중...", None)
 
-            query = handler.get_gmail_query(time_window_str=time_window, month_str=month)
-            raw_messages = self.gog.search_messages(query, max_results=50)
+            raw_messages = []
+            if all_time:
+                # API 쿼리 한도(Rate limit) 보호를 위해 연도별(2026, 2025, 2024 등)로 분할 조회
+                curr_year = int(datetime.now().strftime("%Y"))
+                years_to_scan = [str(y) for y in range(curr_year, curr_year - 3, -1)]
+                seen_ids = set()
+                for y in years_to_scan:
+                    if progress_callback:
+                        progress_callback(f"{msg_prefix} {y}년도 금융 메일 스캔 중...", None)
+                    y_window = f"after:{y}/01/01 before:{int(y)+1}/01/01"
+                    y_query = handler.get_gmail_query(time_window_str=y_window)
+                    y_msgs = self.gog.search_messages(y_query, max_results=50)
+                    for ym in y_msgs:
+                        mid = ym.get("id") or ym.get("threadId")
+                        if mid and mid not in seen_ids:
+                            seen_ids.add(mid)
+                            raw_messages.append(ym)
+            else:
+                query = handler.get_gmail_query(time_window_str=time_window, month_str=month)
+                raw_messages = self.gog.search_messages(query, max_results=50)
 
-            # 중복 체크 (이미 처리된 message ID 필터링)
+            # 중복 체크 (force가 아니면 이미 처리된 message ID 필터링)
             unprocessed_messages = []
             skipped_count = 0
             for m in raw_messages:
                 m_id = m.get("id") or m.get("threadId")
-                if m_id and not self.state.is_processed(m_id):
+                if force or (m_id and not self.state.is_processed(m_id)):
                     unprocessed_messages.append(m)
                 else:
                     skipped_count += 1

@@ -328,6 +328,59 @@ class FinanceHandler(BaseHandler):
             "transactions": [],
             "installments": [],
         }
+
+        unlocked_filename = f"{institution}_{billing_month}_unlocked.html"
+        unlocked_path = os.path.join(os.path.dirname(html_path), unlocked_filename)
+
+        # 이미 복호화된 무암호 파일이 존재하면 Playwright 없이 바로 파싱 (속도 극대화)
+        if os.path.exists(unlocked_path) and os.path.getsize(unlocked_path) > 1000:
+            try:
+                with open(unlocked_path, "r", encoding="utf-8") as f:
+                    unlocked_content = f.read()
+                soup = BeautifulSoup(unlocked_content, "html.parser")
+                all_text = soup.get_text("\n")
+                result["unlocked_rel_url"] = f"statements/{billing_month}/{unlocked_filename}"
+
+                # 총 청구금액 추출
+                patterns = [
+                    r"(?:청구금액|결제예정금액|총\s*결제금액|이번달\s*청구금액|결제금액|이용대금)[^\d]{1,25}([\d,]{3,12})\s*원",
+                    r"([\d,]{3,12})\s*원\s*(?:결제예정|청구)",
+                ]
+                for pat in patterns:
+                    matches = re.findall(pat, all_text)
+                    if matches:
+                        cand = int(re.sub(r"[^\d]", "", matches[0]))
+                        if cand > 0:
+                            result["amount"] = cand
+                            break
+
+                # 출금계좌
+                if "새마을금고" in all_text:
+                    result["withdrawal_account"] = "새마을금고"
+                elif "토스뱅크" in all_text:
+                    result["withdrawal_account"] = "토스뱅크"
+                elif "우리은행" in all_text:
+                    result["withdrawal_account"] = "우리은행"
+
+                # 상세 거래 및 할부 추출
+                if "삼성" in institution:
+                    txs, insts = self._parse_samsung_details(all_text, billing_month)
+                    result["transactions"] = txs
+                    result["installments"] = insts
+                elif "현대" in institution:
+                    txs, insts = self._parse_hyundai_details(all_text, billing_month)
+                    result["transactions"] = txs
+                    result["installments"] = insts
+                elif "우리" in institution:
+                    txs, insts = self._parse_woori_details(unlocked_content, billing_month)
+                    result["transactions"] = txs
+                    result["installments"] = insts
+
+                if result.get("amount") or result.get("transactions"):
+                    return result
+            except Exception as e:
+                logger.debug(f"Cached unlocked parse failed, falling back to browser: {e}")
+
         try:
             from playwright.sync_api import sync_playwright
             with sync_playwright() as p:

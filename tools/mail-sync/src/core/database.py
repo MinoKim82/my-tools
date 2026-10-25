@@ -417,7 +417,7 @@ class FinanceDB:
         return exported_files
 
     def export_installments_csv(self, out_path: str) -> int:
-        """할부 원장 CSV 내보내기"""
+        """현재 최신 청구월 기준 유효 할부 원장 CSV 내보내기"""
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -425,7 +425,8 @@ class FinanceDB:
                    total_rounds, current_round, remaining_rounds, billed_this_month,
                    remaining_principal, status, billing_month, updated_at
             FROM installments
-            WHERE status = 'ACTIVE' AND remaining_rounds > 0 AND total_amount > 0
+            WHERE billing_month = (SELECT MAX(billing_month) FROM installments)
+              AND status = 'ACTIVE' AND remaining_rounds > 0 AND total_amount > 0
             ORDER BY remaining_rounds DESC, id ASC
             """)
             rows = [dict(r) for r in cursor.fetchall()]
@@ -478,12 +479,13 @@ class FinanceDB:
             return [dict(r) for r in cursor.fetchall()]
 
     def get_active_installments(self) -> List[Dict[str, Any]]:
-        """현재 진행 중인 유효 잔여 할부 목록 조회"""
+        """현재 최신 청구월에 진행 중인 유효 잔여 할부 목록 조회"""
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("""
             SELECT * FROM installments
-            WHERE status = 'ACTIVE' AND remaining_rounds > 0 AND total_amount > 0
+            WHERE billing_month = (SELECT MAX(billing_month) FROM installments)
+              AND status = 'ACTIVE' AND remaining_rounds > 0 AND total_amount > 0
             ORDER BY remaining_rounds DESC, id ASC
             """)
             return [dict(r) for r in cursor.fetchall()]

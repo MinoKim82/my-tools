@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import subprocess
+import time
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -10,18 +11,31 @@ class GogClient:
     def __init__(self, account: Optional[str] = None):
         self.account = account
 
-    def _run(self, cmd: List[str], check: bool = True) -> subprocess.CompletedProcess:
+    def _run(self, cmd: List[str], check: bool = True, max_retries: int = 4) -> subprocess.CompletedProcess:
         base_cmd = ["gog"]
         if self.account:
             base_cmd.extend(["-a", self.account])
         full_cmd = base_cmd + cmd
-        return subprocess.run(
-            full_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=check,
-        )
+
+        for attempt in range(max_retries):
+            proc = subprocess.run(
+                full_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            if proc.returncode != 0 and ("rateLimitExceeded" in proc.stderr or "Quota exceeded" in proc.stderr):
+                wait_time = 15 * (attempt + 1)
+                logger.warning(f"Gmail API rate limited, waiting {wait_time}s before retry ({attempt+1}/{max_retries})...")
+                time.sleep(wait_time)
+                continue
+
+            if check and proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode, full_cmd, proc.stdout, proc.stderr)
+            return proc
+
+        return proc
 
     def search_messages(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
         """Gmail 검색 후 메시지 메타데이터 목록 반환"""
