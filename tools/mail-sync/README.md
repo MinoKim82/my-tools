@@ -19,15 +19,17 @@ Gmail을 통해 정기 수신되는 카드사(우리, 현대, 삼성) 명세서�
 4. **옵시디언 볼트(`areas/family/finance/`) 완벽 연동**:
    * **📄 `가족 금융 대시보드.md`**: 옵시디언에서 바로 보는 월간 결제 캘린더 (12일 현대 ➔ 13일 삼성 ➔ 14일 우리 ➔ 15일 우리은행 대출), 통장별 분리 잔고(새마을금고/토스뱅크/우리은행), 잔여 할부 관리 현황 및 주요 지출처 Top 5.
    * **🔓 무암호 명세서 1클릭 열람**: 복호화된 완전한 HTML 화면(`*_unlocked.html`)이 백업되어, 사용자가 비밀번호를 입력할 필요 없이 언제든 1클릭으로 원본 명세서 열람 가능.
-   * **📊 3계층 통합 금융 원장**:
+   * **📊 SQLite 마스터 DB 및 샤딩 원장**:
+     - `data/finance.db`: ACID 트랜잭션 및 다년도 초고속 쿼리를 보장하는 로컬 SQLite 마스터 DB (`monthly_bills`, `installments`, `transactions`).
      - `가족_금융_원장.csv`: 월별 청구 및 결제 일정 원장 (`monthly_bills`).
      - `가족_할부_원장.csv`: 진행 중인 카드 할부의 총액, 현재 회차, 잔여 개월, 남은 원금 관리 (`installments`).
-     - `가족_거래_원장.csv`: 개별 결제건 상세 트랜잭션 원장 (`transactions`).
-   * **📱 모바일 앱 실시간 수신 연동**: 가계부 앱(문자/알림 수집)에서 Google Sheets로 데이터를 직결하는 `webhook_gas.js` 제공.
+     - `가족_거래_원장_YYYY.csv`: 1년 단위로 샤딩 분할된 개별 트랜잭션 원장 (대규모 데이터 적재 최적화).
+   * **📱 모바일 앱 실시간 수신 연동**: 가계부 앱(문자/알림 수집)에서 Google Sheets의 `transactions_YYYY` 탭으로 직결하는 `webhook_gas.js` 제공.
    * **🔗 `가족 공통 홈.md`**: 대시보드 링크 자동 상호 연결.
 5. **외부 애플리케이션 연동 및 전용 조회 CLI**:
    * `mail-sync finance calendar`: 이번 달 12~15일 결제 일정 및 통장별 필요 잔고 브리핑.
    * `mail-sync finance installments`: 현재 진행 중인 잔여 할부 부채 및 남은 개월수 브리핑.
+   * `mail-sync finance query`: SQLite 마스터 DB 기반 다년도 지출 및 가맹점 초고속 검색.
    * `mail-sync export --json`: 로컬 앱 및 위젯에서 언제든 최신 금융 데이터를 JSON으로 수신.
 
 ---
@@ -69,11 +71,15 @@ mail-sync finance calendar
 # 4. 현재 진행 중인 카드 할부 잔여 개월 및 부채 현황 확인
 mail-sync finance installments
 
-# 5. 외부 앱 연동용 정규화 JSON 데이터 출력
+# 5. 다년도 지출 및 가맹점 검색 (SQLite Full Scan)
+mail-sync finance query --keyword 쿠팡
+mail-sync finance query --year 2026 --category 식음료
+
+# 6. 외부 앱 연동용 정규화 JSON 데이터 출력
 mail-sync export --json
 mail-sync export --month 2026-10 --json
 
-# 6. 등록된 핸들러 및 최근 동기화 통계 상태 확인
+# 7. 등록된 핸들러 및 최근 동기화 통계 상태 확인
 mail-sync status
 ```
 

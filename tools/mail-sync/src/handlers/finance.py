@@ -13,6 +13,7 @@ from rich.table import Table
 
 from core.base import BaseHandler, HandlerResult
 from core.config import MailSyncConfig
+from core.database import FinanceDB
 from core.gog_client import GogClient
 
 logger = logging.getLogger(__name__)
@@ -28,8 +29,23 @@ class FinanceHandler(BaseHandler):
     name = "finance"
     description = "우리카드, 현대카드, 삼성카드 명세서 및 우리은행 대출 원리금 통지 수집/복호화/정리"
 
-    def __init__(self):
-        pass
+    def __init__(self, data_dir: Optional[str] = None):
+        self._data_dir = data_dir
+        self._db: Optional[FinanceDB] = None
+
+    def get_db(self, config: MailSyncConfig) -> FinanceDB:
+        """FinanceDB 인스턴스 반환 (자가 복원 / 초기 적재 보장)"""
+        if self._db is None or self._data_dir != config.data_dir:
+            self._data_dir = config.data_dir
+            self._db = FinanceDB(config.data_dir)
+            with self._db._get_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) as cnt FROM transactions")
+                row = cursor.fetchone()
+                cnt = row["cnt"] if row else 0
+                if cnt == 0 and os.path.exists(config.family_finance_dir):
+                    self._db.sync_from_csv_directory(config.family_finance_dir)
+        return self._db
 
     def get_gmail_query(self, time_window_str: Optional[str] = None, month_str: Optional[str] = None) -> str:
         """금융 메일 검색 쿼리: 카드 3사 + 우리은행"""
@@ -618,113 +634,35 @@ class FinanceHandler(BaseHandler):
         return txs, []
 
     def _save_transactions(self, transactions: List[Dict[str, Any]], config: MailSyncConfig) -> None:
-        """가족_거래_원장.csv (transactions) 갱신 및 누적 저장"""
+        """가족_거래_원장_YYYY.csv (연도별 파티셔닝) 및 SQLite transactions 동기화"""
         if not transactions:
             return
-        csv_path = os.path.join(config.family_finance_dir, "가족_거래_원장.csv")
-        headers = [
-            "id", "transaction_date", "card_company", "card_last4", "merchant_name",
-            "category", "original_amount", "discount_amount", "billed_amount",
-            "installment_plan", "status", "source", "billing_month", "reconciled_at"
-        ]
-        existing_dict: Dict[str, Dict[str, Any]] = {}
-        if os.path.exists(csv_path):
-            try:
-                with open(csv_path, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    for r in reader:
-                        if r.get("id"):
-                            existing_dict[r["id"]] = r
-            except Exception as e:
-                logger.warning(f"Failed to read {csv_path}: {e}")
+        db = self.get_db(config)
+        db.upsert_transactions(transactions)
 
-        for tx in transactions:
-            tx_id = tx.get("id")
-            if tx_id:
-                existing_dict[tx_id] = {h: tx.get(h, "") for h in headers}
+        # 1. 연도별 샤딩 CSV 내보내기 (가족_거래_원장_YYYY.csv)
+        db.export_all_yearly_csvs(config.family_finance_dir)
 
-        sorted_txs = sorted(existing_dict.values(), key=lambda x: str(x.get("transaction_date", "")), reverse=True)
-        try:
-            with open(csv_path, "w", encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=headers)
-                writer.writeheader()
-                writer.writerows(sorted_txs)
-        except Exception as e:
-            logger.error(f"Failed to write transactions CSV: {e}")
+        # 2. 하위 호환성을 위해 최신 활성 연도 거래를 가족_거래_원장.csv로도 동기화
+        current_year = datetime.now().strftime("%Y")
+        db.export_yearly_transactions_csv(current_year, os.path.join(config.family_finance_dir, "가족_거래_원장.csv"))
 
     def _save_installments(self, installments: List[Dict[str, Any]], config: MailSyncConfig) -> None:
-        """가족_할부_원장.csv (installments) 갱신 및 누적 저장"""
+        """가족_할부_원장.csv (installments) 갱신 및 SQLite 동기화"""
         if not installments:
             return
+        db = self.get_db(config)
+        db.upsert_installments(installments)
         csv_path = os.path.join(config.family_finance_dir, "가족_할부_원장.csv")
-        headers = [
-            "id", "card_company", "merchant_name", "start_date", "total_amount",
-            "total_rounds", "current_round", "remaining_rounds", "billed_this_month",
-            "remaining_principal", "status", "billing_month", "updated_at"
-        ]
-        existing_dict: Dict[str, Dict[str, Any]] = {}
-        if os.path.exists(csv_path):
-            try:
-                with open(csv_path, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    for r in reader:
-                        if r.get("id"):
-                            existing_dict[r["id"]] = r
-            except Exception as e:
-                logger.warning(f"Failed to read {csv_path}: {e}")
-
-        for ins in installments:
-            ins_id = ins.get("id")
-            if ins_id:
-                existing_dict[ins_id] = {h: ins.get(h, "") for h in headers}
-
-        sorted_insts = sorted(existing_dict.values(), key=lambda x: str(x.get("remaining_rounds", "")), reverse=True)
-        try:
-            with open(csv_path, "w", encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=headers)
-                writer.writeheader()
-                writer.writerows(sorted_insts)
-        except Exception as e:
-            logger.error(f"Failed to write installments CSV: {e}")
+        db.export_installments_csv(csv_path)
 
     def _sync_to_google_sheets(self, items: List[Dict[str, Any]], config: MailSyncConfig, gog: GogClient) -> None:
-        """구글 스프레드시트 및 로컬 CSV 원장(raw_ledger) 행 추가 및 갱신"""
-        import csv
-
-        # 1. 로컬 CSV 파일 (외부 앱 연동 및 Google Drive 자동 동기화용 단일 정규화 원장)
+        """SQLite 마스터 DB, 로컬 CSV 원장(가족_금융_원장.csv) 및 구글 스프레드시트 동기화"""
+        # 1. SQLite 마스터 DB 업서트 및 CSV 내보내기
+        db = self.get_db(config)
+        db.upsert_monthly_bills(items)
         csv_path = os.path.join(config.family_finance_dir, f"{config.spreadsheet_name}.csv")
-        headers = [
-            "id", "due_date", "billing_month", "category", "institution",
-            "item_name", "principal", "interest", "total_amount", "interest_rate",
-            "withdrawal_account", "status", "statement_url", "updated_at"
-        ]
-
-        existing_rows_dict: Dict[str, Dict[str, Any]] = {}
-        if os.path.exists(csv_path):
-            try:
-                with open(csv_path, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f)
-                    for r in reader:
-                        if r.get("id"):
-                            existing_rows_dict[r["id"]] = r
-            except Exception as e:
-                logger.warning(f"Failed to read existing CSV {csv_path}: {e}")
-
-        # 신규 아이템 병합
-        for item in items:
-            item_id = item.get("id")
-            if item_id:
-                existing_rows_dict[item_id] = {h: item.get(h, "") for h in headers}
-
-        # CSV 파일 다시 쓰기 (정렬: due_date 오름차순)
-        sorted_csv_items = sorted(existing_rows_dict.values(), key=lambda x: str(x.get("due_date", "")))
-        try:
-            with open(csv_path, "w", encoding="utf-8", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=headers)
-                writer.writeheader()
-                writer.writerows(sorted_csv_items)
-        except Exception as e:
-            logger.warning(f"Failed to write CSV {csv_path}: {e}")
+        db.export_monthly_bills_csv(csv_path)
 
         # 2. 구글 스프레드시트 API 연동 (사용 가능한 경우 보조 동기화)
         try:
@@ -806,19 +744,9 @@ class FinanceHandler(BaseHandler):
             except Exception as e:
                 logger.warning(f"Failed to read installments for dashboard: {e}")
 
-        # 거래 원장 로드 (Top 5 추출용)
-        tx_csv_path = os.path.join(config.family_finance_dir, "가족_거래_원장.csv")
-        all_txs: List[Dict[str, Any]] = []
-        if os.path.exists(tx_csv_path):
-            try:
-                with open(tx_csv_path, "r", encoding="utf-8") as f:
-                    t_reader = csv.DictReader(f)
-                    for r in t_reader:
-                        r["billed_amount"] = int(r.get("billed_amount") or 0)
-                        all_txs.append(r)
-            except Exception as e:
-                logger.warning(f"Failed to read transactions for dashboard: {e}")
-
+        # 거래 원장 로드 (Top 5 추출용 - SQLite 쿼리)
+        db = self.get_db(config)
+        all_txs = db.query_spending(year=latest_month[:4], limit=100)
         current_month_txs = [t for t in all_txs if t.get("billing_month") == latest_month or t.get("transaction_date", "").startswith(latest_month[:4])]
 
         # 이번 달 요약 마크다운 렌더링
@@ -848,7 +776,7 @@ class FinanceHandler(BaseHandler):
 
         lines.extend([
             ">",
-            f"> 📁 **통합 원장**: [[가족_금융_원장.csv|청구원장]] | [[가족_할부_원장.csv|할부원장]] | [[가족_거래_원장.csv|거래원장]]",
+            f"> 📁 **통합 원장**: [[가족_금융_원장.csv|청구원장]] | [[가족_할부_원장.csv|할부원장]] | [[가족_거래_원장_{latest_month[:4]}.csv|{latest_month[:4]}년 거래원장]]",
             "",
             "---",
             "",
@@ -1021,27 +949,25 @@ class FinanceHandler(BaseHandler):
             month: Optional[str] = typer.Option(None, "--month", "-m", help="조회할 청구월 (예: 2026-10)")
         ):
             """지정/최신 청구월의 12~15일 결제 일정 및 통장별 필요 잔고 브리핑"""
-            import csv
             from core.config import load_config
             cfg = load_config()
             console = Console()
+            db = self.get_db(cfg)
 
-            csv_path = os.path.join(cfg.family_finance_dir, f"{cfg.spreadsheet_name}.csv")
-            if not os.path.exists(csv_path):
-                console.print("[yellow]아직 동기화된 금융 원장(CSV) 파일이 없습니다. 먼저 'mail-sync run'을 실행해 주세요.[/yellow]")
-                return
-
-            all_items = []
-            with open(csv_path, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for r in reader:
-                    r["total_amount"] = int(r.get("total_amount") or 0)
-                    r["principal"] = int(r.get("principal") or 0)
-                    r["interest"] = int(r.get("interest") or 0)
-                    all_items.append(r)
+            all_items = db.get_monthly_bills()
+            if not all_items:
+                csv_path = os.path.join(cfg.family_finance_dir, f"{cfg.spreadsheet_name}.csv")
+                if os.path.exists(csv_path):
+                    with open(csv_path, "r", encoding="utf-8") as f:
+                        reader = csv.DictReader(f)
+                        for r in reader:
+                            r["total_amount"] = int(r.get("total_amount") or 0)
+                            r["principal"] = int(r.get("principal") or 0)
+                            r["interest"] = int(r.get("interest") or 0)
+                            all_items.append(r)
 
             if not all_items:
-                console.print("[yellow]원장 파일에 기록된 데이터가 없습니다.[/yellow]")
+                console.print("[yellow]원장에 기록된 금융 결제 데이터가 없습니다. 먼저 'mail-sync run'을 실행해 주세요.[/yellow]")
                 return
 
             billing_months = sorted(list({it.get("billing_month", "") for it in all_items if it.get("billing_month")}))
@@ -1099,28 +1025,26 @@ class FinanceHandler(BaseHandler):
         @sub_app.command("installments")
         def show_installments():
             """진행 중인 카드 할부 내역 및 남은 개월수/잔액 브리핑"""
-            import csv
             from core.config import load_config
             cfg = load_config()
             console = Console()
+            db = self.get_db(cfg)
 
-            inst_csv_path = os.path.join(cfg.family_finance_dir, "가족_할부_원장.csv")
-            if not os.path.exists(inst_csv_path):
-                console.print("[yellow]아직 동기화된 할부 원장(CSV) 파일이 없습니다. 먼저 'mail-sync run'을 실행해 주세요.[/yellow]")
-                return
-
-            all_insts = []
-            with open(inst_csv_path, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for r in reader:
-                    r["total_amount"] = int(r.get("total_amount") or 0)
-                    r["billed_this_month"] = int(r.get("billed_this_month") or 0)
-                    r["remaining_principal"] = int(r.get("remaining_principal") or 0)
-                    r["total_rounds"] = int(r.get("total_rounds") or 1)
-                    r["current_round"] = int(r.get("current_round") or 1)
-                    r["remaining_rounds"] = int(r.get("remaining_rounds") or 0)
-                    if r.get("status") == "ACTIVE" and r["remaining_rounds"] > 0 and r["total_amount"] > 0:
-                        all_insts.append(r)
+            all_insts = db.get_active_installments()
+            if not all_insts:
+                inst_csv_path = os.path.join(cfg.family_finance_dir, "가족_할부_원장.csv")
+                if os.path.exists(inst_csv_path):
+                    with open(inst_csv_path, "r", encoding="utf-8") as f:
+                        reader = csv.DictReader(f)
+                        for r in reader:
+                            r["total_amount"] = int(r.get("total_amount") or 0)
+                            r["billed_this_month"] = int(r.get("billed_this_month") or 0)
+                            r["remaining_principal"] = int(r.get("remaining_principal") or 0)
+                            r["total_rounds"] = int(r.get("total_rounds") or 1)
+                            r["current_round"] = int(r.get("current_round") or 1)
+                            r["remaining_rounds"] = int(r.get("remaining_rounds") or 0)
+                            if r.get("status") == "ACTIVE" and r["remaining_rounds"] > 0 and r["total_amount"] > 0:
+                                all_insts.append(r)
 
             if not all_insts:
                 console.print("[green]현재 진행 중인 카드 할부 내역이 없습니다! 🎉[/green]")
@@ -1156,3 +1080,46 @@ class FinanceHandler(BaseHandler):
             console.print(table)
             console.print(f"\n[bold yellow]이번 달 총 할부 청구액: {total_month_bill:,}원[/bold yellow]")
             console.print(f"[bold red]💡 향후 납부해야 할 잔여 할부 총액: {total_rem_debt:,}원[/bold red]\n")
+
+        @sub_app.command("query")
+        def query_transactions(
+            keyword: Optional[str] = typer.Option(None, "--keyword", "-k", help="가맹점명 또는 카테고리 검색어"),
+            year: Optional[str] = typer.Option(None, "--year", "-y", help="조회할 연도 (예: 2026)"),
+            category: Optional[str] = typer.Option(None, "--category", "-c", help="카테고리 필터 (쇼핑/페이, 고정비, 식음료 등)"),
+            limit: int = typer.Option(50, "--limit", "-n", help="최대 출력 건수"),
+        ):
+            """SQLite 마스터 DB 기반 다년도 초고속 지출 및 가맹점 검색"""
+            from core.config import load_config
+            cfg = load_config()
+            console = Console()
+            db = self.get_db(cfg)
+
+            results = db.query_spending(keyword=keyword, year=year, category=category, limit=limit)
+            if not results:
+                console.print("[yellow]조건에 일치하는 거래 내역이 없습니다.[/yellow]")
+                return
+
+            console.print(f"\n[bold cyan]🔍 다년도 통합 거래 검색 결과 (총 {len(results)}건 표시)[/bold cyan]\n")
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("이용일자", style="yellow")
+            table.add_column("카드사", style="dim")
+            table.add_column("가맹점명", style="bold green")
+            table.add_column("카테고리")
+            table.add_column("결제금액", justify="right", style="bold red")
+            table.add_column("할부", justify="center")
+            table.add_column("상태", justify="center")
+
+            total_amt = sum(r.get("billed_amount", 0) for r in results)
+            for r in results:
+                table.add_row(
+                    r.get("transaction_date", ""),
+                    r.get("card_company", ""),
+                    r.get("merchant_name", ""),
+                    r.get("category", ""),
+                    f"{r.get('billed_amount', 0):,}원",
+                    r.get("installment_plan", "일시불"),
+                    r.get("status", "VERIFIED"),
+                )
+
+            console.print(table)
+            console.print(f"\n[bold yellow]💰 검색된 내역 합계 금액: {total_amt:,}원[/bold yellow]\n")

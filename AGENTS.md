@@ -193,3 +193,4 @@ AI 에이전트가 새로운 도구를 추가할 때는 반드시 다음 단계�
   - `ADR-10`: 저장소 내 문서 참조 시 순수 상대 경로 강제 (Portable Relative Links)
   - `ADR-11`: 커밋 타이밍 및 사전 체크리스트(Pre-Commit Checklist) 수립
   - `ADR-12`: 도구별 전용 AGENTS.md 도입 및 3원화 문서 체계 확립
+  - `ADR-13`: SQLite 하이브리드 마스터 백엔드 및 연도별 샤딩 원장 채택

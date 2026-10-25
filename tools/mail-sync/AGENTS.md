@@ -29,14 +29,17 @@ flowchart TD
         D -.->|메일 목록 배분| H_NEW
     end
 
-    subgraph Storage["저장소 동기화 (3계층 원장)"]
+    subgraph Storage["저장소 동기화 (SQLite 마스터 & 3계층 샤딩 뷰)"]
+        SQLITE["finance.db (SQLite 마스터 DB)"]
         CSV_BILL["가족_금융_원장.csv (월별 청구)"]
         CSV_INST["가족_할부_원장.csv (할부 관리)"]
-        CSV_TRX["가족_거래_원장.csv (거래 내역)"]
+        CSV_TRX["가족_거래_원장_YYYY.csv (연도별 샤딩 원장)"]
         OBS["가족 금융 대시보드.md (Obsidian)"]
         STMT["statements/ (무암호 _unlocked.html)"]
         
-        H_FIN --> CSV_BILL & CSV_INST & CSV_TRX & OBS & STMT
+        H_FIN --> SQLITE
+        SQLITE --> CSV_BILL & CSV_INST & CSV_TRX & OBS
+        H_FIN --> STMT
     end
 ```
 
@@ -114,19 +117,26 @@ class TaxHandler(BaseHandler):
 
 ---
 
-## 4. 데이터 스키마 및 저장 원칙 (3계층 원장)
+## 4. 데이터 스키마 및 저장 원칙 (SQLite 마스터 & 샤딩 원장)
 
-1. **`가족_금융_원장.csv` (월별 청구 원장 / `monthly_bills`)**:
+1. **`data/finance.db` (SQLite 로컬 마스터 데이터베이스)**:
+   * ACID 보장 및 다년도 초고속 색인 검색 엔진 (`FinanceDB`).
+   * 테이블: `monthly_bills`, `installments`, `transactions`.
+   * 자가 치유(Self-healing): DB 파일이 없거나 비어있는 경우 `family_finance_dir`의 CSV 파일들로부터 자동 재적재(`sync_from_csv_directory`).
+2. **`가족_금융_원장.csv` (월별 청구 원장 / `monthly_bills`)**:
    * 컬럼: `id`, `due_date`, `billing_month`, `category`, `institution`, `item_name`, `principal`, `interest`, `total_amount`, `interest_rate`, `withdrawal_account`, `status`, `statement_url`, `updated_at`
-2. **`가족_할부_원장.csv` (할부 종합 관리 원장 / `installments`)**:
+3. **`가족_할부_원장.csv` (할부 종합 관리 원장 / `installments`)**:
    * 컬럼: `id`, `card_company`, `merchant_name`, `start_date`, `total_amount`, `total_rounds`, `current_round`, `remaining_rounds`, `billed_this_month`, `remaining_principal`, `status`, `billing_month`, `updated_at`
-3. **`가족_거래_원장.csv` (개별 거래 상세 원장 / `transactions`)**:
+4. **`가족_거래_원장_YYYY.csv` (연도별 파티셔닝 거래 원장 / `transactions`)**:
+   * 1년 단위 샤딩 파일(`가족_거래_원장_2026.csv` 등). 대규모 데이터 누적 시에도 파일 크기/동기화 부하 분산.
    * 컬럼: `id`, `transaction_date`, `card_company`, `card_last4`, `merchant_name`, `category`, `original_amount`, `discount_amount`, `billed_amount`, `installment_plan`, `status`, `source`, `billing_month`, `reconciled_at`
-4. **`webhook_gas.js` (모바일 가계부 App 연동 Webhook)**:
-   * Google Apps Script로 Google Sheets에 배포하여 모바일 앱 문자/푸시 파싱 결과를 `transactions` 시트에 HTTP POST로 실시간 등록.
-5. **`가족 금융 대시보드.md` (Obsidian Dashboard)**:
+   * 하위 호환성을 위해 최신 활성 연도는 `가족_거래_원장.csv`로도 동시 생성 유지.
+5. **`webhook_gas.js` (모바일 가계부 App 연동 Webhook)**:
+   * Google Apps Script로 Google Sheets에 배포하여 모바일 앱 문자/푸시 파싱 결과를 `transactions_YYYY` 탭에 HTTP POST로 실시간 등록.
+6. **`가족 금융 대시보드.md` (Obsidian Dashboard)**:
    * 매 실행 시 `updated: YYYY-MM-DD` 갱신.
    * 출금 계좌별 분리 준비 자금(새마을금고, 토스뱅크, 우리은행) 및 잔여 할부 관리 현황 브리핑.
+   * 상단 KPI에 해당 연도 원장 링크(`[[가족_거래_원장_2026.csv|2026년 거래원장]]`) 연결.
 
 ---
 

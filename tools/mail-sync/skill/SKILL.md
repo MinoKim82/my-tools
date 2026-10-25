@@ -1,6 +1,6 @@
 ---
 name: mail-sync
-description: Automatically sync, decrypt, and inspect credit card statements (Woori, Hyundai, Samsung) and bank loan payments (Woori Bank) from Gmail into Google Drive, Obsidian family finance dashboard, and 3-tier CSV ledgers using the mail-sync CLI tool. Trigger this skill whenever the user asks about card bills, loan payments, payment calendar, cash flow, installments and remaining months, or mail syncing (e.g., "이번 달 카드값 얼마 나와?", "12~15일에 통장에 얼마 준비해야 돼?", "통장별로 얼마씩 넣어야 해?", "할부 얼마나 남았어?", "카드 할부 내역 보여줘", "남은 할부 개월수 확인해줘", "우리은행 대출 이자 얼마야?", "메일에서 카드 명세서 가져와줘", "금융 대시보드 최신화해줘", "mail-sync 실행해줘", "카드값 결제 일정 보여줘", "금융 원장 데이터 뽑아줘").
+description: Automatically sync, decrypt, and inspect credit card statements (Woori, Hyundai, Samsung) and bank loan payments (Woori Bank) from Gmail into Google Drive, Obsidian family finance dashboard, and SQLite/CSV ledgers using the mail-sync CLI tool. Trigger this skill whenever the user asks about card bills, loan payments, payment calendar, cash flow, installments and remaining months, spending search, or mail syncing (e.g., "이번 달 카드값 얼마 나와?", "12~15일에 통장에 얼마 준비해야 돼?", "통장별로 얼마씩 넣어야 해?", "할부 얼마나 남았어?", "카드 할부 내역 보여줘", "남은 할부 개월수 확인해줘", "쿠팡에서 얼마 썼어?", "지출 내역 검색해줘", "우리은행 대출 이자 얼마야?", "메일에서 카드 명세서 가져와줘", "금융 대시보드 최신화해줘", "mail-sync 실행해줘", "카드값 결제 일정 보여줘", "금융 원장 데이터 뽑아줘").
 ---
 
 # mail-sync
@@ -25,7 +25,18 @@ mail-sync finance installments
 ```
 * **출력**: 가맹점별 총 할부원금, 진행 회차, 남은 개월수, 이번달 청구액, 남은 잔여원금 표 및 총 할부 부채.
 
-### 3. 최신 메일 동기화 실행 (수동 동기화 요청 시)
+### 3. 다년도 통합 지출 및 가맹점 검색
+사용자가 특정 가맹점에서의 소비나 특정 연도/카테고리 지출을 물어볼 때 실행합니다:
+```bash
+# 특정 가맹점명 검색 (예: 쿠팡, 스타벅스)
+mail-sync finance query --keyword 쿠팡
+
+# 특정 연도 및 카테고리 필터 검색
+mail-sync finance query --year 2026 --category 고정비
+```
+* **출력**: SQLite 마스터 DB 기반 초고속 Full Scan 결과 테이블 및 합계 금액.
+
+### 4. 최신 메일 동기화 실행 (수동 동기화 요청 시)
 사용자가 "메일 최신화해줘", "새로 온 카드 명세서 가져와"라고 요청할 때:
 ```bash
 # 기본: 최근 1일치 빠른 점검
@@ -38,13 +49,13 @@ mail-sync run --days 7
 mail-sync run --month 2026-10
 ```
 
-### 3. 정규화된 금융 원장 데이터 내보내기 (JSON)
+### 5. 정규화된 금융 원장 데이터 내보내기 (JSON)
 사용자 또는 연동 프로그램이 데이터를 요청할 때:
 ```bash
 mail-sync export --json
 ```
 
-### 4. 동기화 상태 점검
+### 6. 동기화 상태 점검
 동기화 통계 및 마지막 실행 시각 점검:
 ```bash
 mail-sync status

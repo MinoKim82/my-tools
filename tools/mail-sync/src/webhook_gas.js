@@ -62,21 +62,24 @@ function doPost(e) {
 }
 
 function handleTransaction(ss, data) {
-  let sheet = ss.getSheetByName("transactions");
+  const now = new Date();
+  const dateStr = data.date || Utilities.formatDate(now, "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
+  const year = dateStr.slice(0, 4);
+  const sheetName = "transactions_" + year;
+  let sheet = ss.getSheetByName(sheetName);
   if (!sheet) {
-    sheet = ss.insertSheet("transactions");
+    sheet = ss.insertSheet(sheetName);
     sheet.appendRow([
       "id", "transaction_date", "card_company", "card_last4", "merchant_name",
       "category", "original_amount", "discount_amount", "billed_amount",
-      "installment_plan", "status", "source", "reconciled_at"
+      "installment_plan", "status", "source", "billing_month", "reconciled_at"
     ]);
   }
 
-  const now = new Date();
-  const dateStr = data.date || Utilities.formatDate(now, "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
   const trxId = "APP-" + Utilities.formatDate(now, "Asia/Seoul", "yyyyMMdd-HHmmss-") + Math.floor(Math.random() * 1000);
   const amount = Number(data.amount || 0);
   const plan = Number(data.installment_plan || 1);
+  const billingMonth = dateStr.slice(0, 7);
 
   sheet.appendRow([
     trxId,
@@ -91,6 +94,7 @@ function handleTransaction(ss, data) {
     plan === 1 ? "일시불" : (plan + "개월"),
     "PENDING", // 초기 상태: 가승인/문자수신
     "APP_SMS",
+    billingMonth,
     ""
   ]);
 
