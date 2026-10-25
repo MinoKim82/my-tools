@@ -1,6 +1,6 @@
 ---
 name: mail-sync
-description: Automatically sync, decrypt, and inspect credit card statements (Woori, Hyundai, Samsung) and bank loan payments (Woori Bank) from Gmail into Google Drive, Obsidian family finance dashboard, and CSV ledgers using the mail-sync CLI tool. Trigger this skill whenever the user asks about card bills, loan payments, payment calendar, cash flow, or mail syncing (e.g., "이번 달 카드값 얼마 나와?", "12~15일에 통장에 얼마 준비해야 돼?", "우리은행 대출 이자 얼마야?", "메일에서 카드 명세서 가져와줘", "금융 대시보드 최신화해줘", "mail-sync 실행해줘", "카드값 결제 일정 보여줘", "금융 원장 데이터 뽑아줘").
+description: Automatically sync, decrypt, and inspect credit card statements (Woori, Hyundai, Samsung) and bank loan payments (Woori Bank) from Gmail into Google Drive, Obsidian family finance dashboard, and 3-tier CSV ledgers using the mail-sync CLI tool. Trigger this skill whenever the user asks about card bills, loan payments, payment calendar, cash flow, installments and remaining months, or mail syncing (e.g., "이번 달 카드값 얼마 나와?", "12~15일에 통장에 얼마 준비해야 돼?", "통장별로 얼마씩 넣어야 해?", "할부 얼마나 남았어?", "카드 할부 내역 보여줘", "남은 할부 개월수 확인해줘", "우리은행 대출 이자 얼마야?", "메일에서 카드 명세서 가져와줘", "금융 대시보드 최신화해줘", "mail-sync 실행해줘", "카드값 결제 일정 보여줘", "금융 원장 데이터 뽑아줘").
 ---
 
 # mail-sync
@@ -16,9 +16,16 @@ description: Automatically sync, decrypt, and inspect credit card statements (Wo
 ```bash
 mail-sync finance calendar
 ```
-* **출력**: 12일(현대) ➔ 13일(삼성) ➔ 14일(우리) ➔ 15일(우리은행 대출) 일자순 테이블 및 출금 필요액.
+* **출력**: 12일(현대) ➔ 13일(삼성) ➔ 14일(우리) ➔ 15일(우리은행 대출) 일자순 테이블 및 실제 출금 통장별(새마을금고, 토스뱅크, 우리은행) 필요액.
 
-### 2. 최신 메일 동기화 실행 (수동 동기화 요청 시)
+### 2. 진행 중인 카드 할부 잔여 개월 및 부채 현황 조회
+사용자가 할부 내역, 남은 개월수, 잔여 할부금 등을 물어볼 때 실행합니다:
+```bash
+mail-sync finance installments
+```
+* **출력**: 가맹점별 총 할부원금, 진행 회차, 남은 개월수, 이번달 청구액, 남은 잔여원금 표 및 총 할부 부채.
+
+### 3. 최신 메일 동기화 실행 (수동 동기화 요청 시)
 사용자가 "메일 최신화해줘", "새로 온 카드 명세서 가져와"라고 요청할 때:
 ```bash
 # 기본: 최근 1일치 빠른 점검
