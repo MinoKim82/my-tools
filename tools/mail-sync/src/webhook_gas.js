@@ -61,6 +61,20 @@ function doPost(e) {
   }
 }
 
+function generateNaturalId(data, dateStr) {
+  // 멱등성 보장 지문: 분 단위 결제일시 + 카드사 + 승인금액 + 가맹점명
+  const cleanMerchant = (data.merchant_name || "").replace(/\s+/g, "");
+  const rawKey = dateStr.slice(0, 16) + "_" + (data.card_company || "") + "_" + (data.amount || 0) + "_" + cleanMerchant;
+  const digest = Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, rawKey);
+  let hashStr = "";
+  for (let i = 0; i < digest.length; i++) {
+    const byteVal = (digest[i] < 0) ? digest[i] + 256 : digest[i];
+    const byteHex = byteVal.toString(16);
+    hashStr += (byteHex.length === 1) ? "0" + byteHex : byteHex;
+  }
+  return "TRX-RT-" + hashStr.substring(0, 16);
+}
+
 function handleTransaction(ss, data) {
   const now = new Date();
   const dateStr = data.date || Utilities.formatDate(now, "Asia/Seoul", "yyyy-MM-dd HH:mm:ss");
@@ -76,7 +90,20 @@ function handleTransaction(ss, data) {
     ]);
   }
 
-  const trxId = "APP-" + Utilities.formatDate(now, "Asia/Seoul", "yyyyMMdd-HHmmss-") + Math.floor(Math.random() * 1000);
+  const trxId = generateNaturalId(data, dateStr);
+
+  // 멱등성 중복 검사: 최근 100행 내에 동일 ID가 이미 존재하는지 확인
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    const checkStart = Math.max(2, lastRow - 100);
+    const existingIds = sheet.getRange(checkStart, 1, lastRow - checkStart + 1, 1).getValues();
+    for (let r = 0; r < existingIds.length; r++) {
+      if (existingIds[r][0] === trxId) {
+        return jsonResponse({ status: "duplicate_skipped", id: trxId, message: "Duplicate transaction skipped" });
+      }
+    }
+  }
+
   const amount = Number(data.amount || 0);
   const plan = Number(data.installment_plan || 1);
   const billingMonth = dateStr.slice(0, 7);

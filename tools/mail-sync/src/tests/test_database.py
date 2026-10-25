@@ -102,3 +102,98 @@ def test_sync_from_csv_directory(temp_db):
     queried = db.query_spending(keyword="테스트가맹점")
     assert len(queried) == 1
     assert queried[0]["billed_amount"] == 50000
+
+def test_reconciliation_matching_and_midstream_insertion(temp_db):
+    db, _ = temp_db
+
+    # 1. 실시간 SMS로 들어온 불완전한 PENDING 건 2건 (1건은 정상, 1건은 중복 수신)
+    sms_items = [
+        {
+            "id": "TRX-RT-01",
+            "transaction_date": "2026-09-22 14:30:00",
+            "card_company": "현대카드",
+            "merchant_name": "놀유니버스",
+            "category": "미분류",
+            "original_amount": 551666,
+            "billed_amount": 551666,
+            "status": "PENDING",
+            "source": "APP_SMS",
+            "billing_month": "2026-10",
+        },
+        {
+            "id": "TRX-RT-02_DUP",
+            "transaction_date": "2026-09-22 14:30:05",
+            "card_company": "현대카드",
+            "merchant_name": "놀유니버스",
+            "category": "미분류",
+            "original_amount": 551666,
+            "billed_amount": 551666,
+            "status": "PENDING",
+            "source": "APP_SMS",
+            "billing_month": "2026-09", # 지난달 미매칭으로 남아있던 유령 중복건
+        },
+    ]
+    db.upsert_transactions(sms_items)
+
+    # 2. 결산 명세서 도착:
+    # - 1건은 TRX-RT-01과 매칭될 정확한 건 (할인 적용 500,000원, 정확한 상호)
+    # - 1건은 SMS에 없었던 중간 누락 결제건 (9월 15일 후불교통 45,000원)
+    stmt_items = [
+        {
+            "id": "STMT-001",
+            "transaction_date": "2026-09-22",
+            "card_company": "현대카드",
+            "merchant_name": "토스페이먼츠주식회사-주식회사놀유니버",
+            "category": "쇼핑/페이",
+            "original_amount": 551666,
+            "discount_amount": 51666,
+            "billed_amount": 500000,
+            "installment_plan": "일시불",
+            "status": "VERIFIED",
+            "source": "MAIL_STATEMENT",
+            "billing_month": "2026-10",
+        },
+        {
+            "id": "STMT-002",
+            "transaction_date": "2026-09-15",
+            "card_company": "현대카드",
+            "merchant_name": "후불교통이용대금",
+            "category": "교통",
+            "original_amount": 45000,
+            "discount_amount": 0,
+            "billed_amount": 45000,
+            "installment_plan": "일시불",
+            "status": "VERIFIED",
+            "source": "MAIL_STATEMENT",
+            "billing_month": "2026-10",
+        },
+    ]
+
+    stats = db.reconcile_and_upsert_transactions(stmt_items)
+
+    assert stats["matched"] == 1
+    assert stats["inserted"] == 1
+    assert stats["ghost_flagged"] == 1
+
+    # 검증 1: 기존 TRX-RT-01이 VERIFIED 및 최종 가맹점/할인금액으로 승격되었는지 확인
+    with db._get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM transactions WHERE id = 'TRX-RT-01'")
+        row = dict(cursor.fetchone())
+        assert row["status"] == "VERIFIED"
+        assert row["merchant_name"] == "토스페이먼츠주식회사-주식회사놀유니버"
+        assert row["discount_amount"] == 51666
+        assert row["billed_amount"] == 500000
+        assert row["source"] == "RECONCILED"
+
+        # 검증 2: 중간 누락 건(STMT-002, 9월 15일)이 정확히 삽입되었는지 확인
+        cursor.execute("SELECT * FROM transactions WHERE id = 'STMT-002'")
+        stmt_row = dict(cursor.fetchone())
+        assert stmt_row["status"] == "VERIFIED"
+        assert stmt_row["merchant_name"] == "후불교통이용대금"
+
+        # 검증 3: 매칭되지 않은 과거 유령 중복건(TRX-RT-02_DUP)이 DUPLICATE_SUSPECT로 격리되었는지 확인
+        cursor.execute("SELECT * FROM transactions WHERE id = 'TRX-RT-02_DUP'")
+        dup_row = dict(cursor.fetchone())
+        assert dup_row["status"] == "DUPLICATE_SUSPECT"
+

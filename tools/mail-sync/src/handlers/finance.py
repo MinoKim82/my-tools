@@ -638,14 +638,11 @@ class FinanceHandler(BaseHandler):
         if not transactions:
             return
         db = self.get_db(config)
-        db.upsert_transactions(transactions)
+        # 1. 결산 명세서와 기존 PENDING(SMS/앱) 거래 간 1:1 대사(Reconciliation) 및 승격
+        db.reconcile_and_upsert_transactions(transactions)
 
-        # 1. 연도별 샤딩 CSV 내보내기 (가족_거래_원장_YYYY.csv)
+        # 2. 연도별 샤딩 CSV 내보내기 (가족_거래_원장_YYYY.csv 단일 표준)
         db.export_all_yearly_csvs(config.family_finance_dir)
-
-        # 2. 하위 호환성을 위해 최신 활성 연도 거래를 가족_거래_원장.csv로도 동기화
-        current_year = datetime.now().strftime("%Y")
-        db.export_yearly_transactions_csv(current_year, os.path.join(config.family_finance_dir, "가족_거래_원장.csv"))
 
     def _save_installments(self, installments: List[Dict[str, Any]], config: MailSyncConfig) -> None:
         """가족_할부_원장.csv (installments) 갱신 및 SQLite 동기화"""

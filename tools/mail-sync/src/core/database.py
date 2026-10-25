@@ -253,6 +253,118 @@ class FinanceDB:
             conn.executemany(query, clean_items)
             conn.commit()
 
+    def reconcile_and_upsert_transactions(self, statement_items: List[Dict[str, Any]]) -> Dict[str, int]:
+        """결산 명세서와 기존 실시간 PENDING(SMS/앱) 거래 간 1:1 대사(Reconciliation) 및 승격"""
+        if not statement_items:
+            return {"matched": 0, "inserted": 0, "ghost_flagged": 0}
+
+        now_str = datetime.now().isoformat()
+        stats = {"matched": 0, "inserted": 0, "ghost_flagged": 0}
+
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+
+            # 1. 기존 PENDING 상태의 실시간 거래 목록 조회
+            cursor.execute("""
+            SELECT id, transaction_date, card_company, card_last4, merchant_name, original_amount, billed_amount
+            FROM transactions
+            WHERE status = 'PENDING'
+            """)
+            pending_rows = [dict(r) for r in cursor.fetchall()]
+
+            consumed_pending_ids = set()
+            new_items_to_insert = []
+
+            for s in statement_items:
+                s_date = str(s.get("transaction_date", ""))[:10]
+                s_card = str(s.get("card_company", ""))
+                s_orig_amt = int(s.get("original_amount") or s.get("billed_amount") or 0)
+                s_billed_amt = int(s.get("billed_amount") or 0)
+
+                # 2. PENDING 후보군 중 1:1 매칭 탐색 (카드사 일치 & 금액 일치 & 날짜 ±1일 오차)
+                matched_id = None
+                for p in pending_rows:
+                    if p["id"] in consumed_pending_ids:
+                        continue
+                    if p.get("card_company") != s_card:
+                        continue
+                    p_orig = int(p.get("original_amount") or p.get("billed_amount") or 0)
+                    p_billed = int(p.get("billed_amount") or 0)
+                    # 금액 일치 여부 (원금 또는 청구액)
+                    if s_orig_amt != p_orig and s_billed_amt != p_billed and s_billed_amt != p_orig:
+                        continue
+
+                    # 날짜 ±1일 일치 여부
+                    p_date = str(p.get("transaction_date") or "")[:10]
+                    date_diff = 999
+                    if s_date and p_date:
+                        try:
+                            d1 = datetime.strptime(s_date, "%Y-%m-%d")
+                            d2 = datetime.strptime(p_date, "%Y-%m-%d")
+                            date_diff = abs((d1 - d2).days)
+                        except Exception:
+                            date_diff = 0 if s_date == p_date else 999
+
+                    if date_diff <= 1:
+                        matched_id = p["id"]
+                        break
+
+                if matched_id:
+                    # 매칭 성공: SMS PENDING 건을 확정 데이터로 승격(Promotion)
+                    cursor.execute("""
+                    UPDATE transactions
+                    SET merchant_name = :merchant_name,
+                        category = :category,
+                        original_amount = :original_amount,
+                        discount_amount = :discount_amount,
+                        billed_amount = :billed_amount,
+                        installment_plan = :installment_plan,
+                        status = 'VERIFIED',
+                        source = 'RECONCILED',
+                        billing_month = :billing_month,
+                        reconciled_at = :reconciled_at
+                    WHERE id = :id
+                    """, {
+                        "id": matched_id,
+                        "merchant_name": str(s.get("merchant_name", "")),
+                        "category": str(s.get("category", "일반")),
+                        "original_amount": int(s.get("original_amount") or 0),
+                        "discount_amount": int(s.get("discount_amount") or 0),
+                        "billed_amount": int(s.get("billed_amount") or 0),
+                        "installment_plan": str(s.get("installment_plan") or "일시불"),
+                        "billing_month": str(s.get("billing_month", "")),
+                        "reconciled_at": now_str,
+                    })
+                    consumed_pending_ids.add(matched_id)
+                    stats["matched"] += 1
+                else:
+                    # 매칭 실패 (SMS에 없었던 건 - 교통, 연회비, 누락분): 신규 삽입 대상으로 등록
+                    new_items_to_insert.append(s)
+
+            conn.commit()
+
+        # 3. 누락된 신규 건(명세서에만 있는 건) 일반 upsert로 삽입 (시간순 자동 정렬 지원)
+        if new_items_to_insert:
+            self.upsert_transactions(new_items_to_insert)
+            stats["inserted"] += len(new_items_to_insert)
+
+        # 4. 결산 마감된 월에 속하면서 끝내 매칭되지 않은 과거 PENDING 건 (유령 중복 / 취소건) 처리
+        billing_months = {s.get("billing_month") for s in statement_items if s.get("billing_month")}
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            for bm in billing_months:
+                if not bm:
+                    continue
+                cursor.execute("""
+                UPDATE transactions
+                SET status = 'DUPLICATE_SUSPECT', reconciled_at = ?
+                WHERE status = 'PENDING' AND billing_month IS NOT NULL AND billing_month != '' AND billing_month < ?
+                """, (now_str, bm))
+                stats["ghost_flagged"] += cursor.rowcount
+            conn.commit()
+
+        return stats
+
     def export_yearly_transactions_csv(self, year: str, out_path: str) -> int:
         """특정 연도의 거래 내역을 CSV로 내보내기 (연도별 샤딩 뷰)"""
         with self._get_conn() as conn:

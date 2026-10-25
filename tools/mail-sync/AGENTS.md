@@ -130,9 +130,11 @@ class TaxHandler(BaseHandler):
 4. **`가족_거래_원장_YYYY.csv` (연도별 파티셔닝 거래 원장 / `transactions`)**:
    * 1년 단위 샤딩 파일(`가족_거래_원장_2026.csv` 등). 대규모 데이터 누적 시에도 파일 크기/동기화 부하 분산.
    * 컬럼: `id`, `transaction_date`, `card_company`, `card_last4`, `merchant_name`, `category`, `original_amount`, `discount_amount`, `billed_amount`, `installment_plan`, `status`, `source`, `billing_month`, `reconciled_at`
-   * 하위 호환성을 위해 최신 활성 연도는 `가족_거래_원장.csv`로도 동시 생성 유지.
+   * 기존 비분할 레거시 파일(`가족_거래_원장.csv`)은 완전 폐기하고 연도별 파일(`가족_거래_원장_YYYY.csv`)만 단일 표준으로 유지.
+   * 결산 명세서 수신 시 `reconcile_and_upsert_transactions`를 통해 1:1 대사, 할인액/청구액/최종가맹점명 승격, 중간 누락건 시간순 자동 정렬 삽입 및 유령 중복건 격리(`DUPLICATE_SUSPECT`).
 5. **`webhook_gas.js` (모바일 가계부 App 연동 Webhook)**:
    * Google Apps Script로 Google Sheets에 배포하여 모바일 앱 문자/푸시 파싱 결과를 `transactions_YYYY` 탭에 HTTP POST로 실시간 등록.
+   * `결제분단위일시 + 카드사 + 승인금액 + 가맹점명` 조합 해시를 자연키(`TRX-RT-...`)로 생성하여 실시간 중복 수신 1차 원천 차단.
 6. **`가족 금융 대시보드.md` (Obsidian Dashboard)**:
    * 매 실행 시 `updated: YYYY-MM-DD` 갱신.
    * 출금 계좌별 분리 준비 자금(새마을금고, 토스뱅크, 우리은행) 및 잔여 할부 관리 현황 브리핑.
